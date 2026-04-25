@@ -272,7 +272,11 @@ def fetch_stock_supply_demand(code: str) -> dict:
     try:
         resp = requests.get(url, headers=NAVER_HEADERS, timeout=10)
         resp.encoding = "euc-kr"
-        tables = pd.read_html(resp.text, thousands=",")
+        html = resp.text
+        if "<table" not in html:
+            log.warning(f"[{code}] 수급 시계열 실패: 유효한 HTML 없음")
+            return pd.DataFrame()
+        tables = pd.read_html(html, thousands=",")
         # 보통 두 번째 테이블에 날짜별 기관/외인 데이터
         for t in tables:
             if "날짜" in str(t.columns.tolist()):

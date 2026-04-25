@@ -66,3 +66,4 @@ jobs:
             signal_history_*.json
             index_*.html
           retention-days: 7
+          if-no-files-found: ignore

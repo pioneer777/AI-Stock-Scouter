@@ -77,3 +77,4 @@ jobs:
             signal_history_US.json
             index_US.html
           retention-days: 3
+          if-no-files-found: ignore
