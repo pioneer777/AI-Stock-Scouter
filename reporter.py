@@ -148,9 +148,15 @@ def _build_sec2_chunks(table: list[dict], header: str) -> list[str]:
     return msgs
 
 
-def _build_sec3(supply: dict, market: str, header: str) -> str:
+def _build_sec3(supply: dict, market: str, header: str, kis_failed: bool = False) -> str:
     """섹션 3: 수급 분석"""
     lines = [header, _sep(), "", "💧 <b>3. 수급 분석</b>"]
+
+    if kis_failed:
+        lines.append("⚠️ <b>KIS API 연결 실패</b> — APP key/secret 확인 필요")
+        lines.append("  (Naver 데이터로 fallback)")
+        lines.append("")
+
     if market == "KR":
         for label in ["기관", "외인"]:
             items = supply.get(label, [])
@@ -224,11 +230,13 @@ def build_messages(
     trends      = results.get("추세분석", {})
     supply      = results.get("수급TOP", {})
 
+    kis_failed = results.get("kis_failed", False)
+
     sec1, signal_codes = _build_sec1(new_signals, header, pages_url, market)
 
     msgs = [sec1]
     msgs.extend(_build_sec2_chunks(table, header))
-    msgs.append(_build_sec3(supply, market, header))
+    msgs.append(_build_sec3(supply, market, header, kis_failed=kis_failed))
     msgs.append(_build_sec4(trends, signal_codes, pages_url, market, header, chart_url))
 
     return msgs

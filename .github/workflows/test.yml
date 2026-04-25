@@ -47,6 +47,9 @@ jobs:
           TELEGRAM_CHAT_ID:   ${{ inputs.market == 'KR' && secrets.TEST_CHAT_ID_KR || secrets.TEST_CHAT_ID_US }}
           PAGES_URL:          ${{ secrets.PAGES_URL }}
           DRY_RUN:            ${{ inputs.dry_run }}
+          KIS_APP_KEY:        ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET:     ${{ secrets.KIS_APP_SECRET }}
+          DART_API_KEY:       ${{ secrets.DART_API_KEY }}
         run: |
           echo "==================================="
           echo " 시장: ${{ inputs.market }}"

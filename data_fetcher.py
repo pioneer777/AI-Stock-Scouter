@@ -1,12 +1,17 @@
 """
 data_fetcher.py — 주가 데이터 수집 + 기술 지표 계산
   - yfinance: KR/US OHLCV + 재무 정보
-  - Naver Finance 크롤링: 기관/외인 순매수 TOP (KR 전용)
+  - KIS API: 기관/외인 순매수 시계열 (KR 전용, 1차)
+  - Naver Finance 크롤링: 기관/외인 순매수 TOP (KR 전용, fallback)
 """
 
 import io
+import json
 import logging
+import os
 import time
+import xml.etree.ElementTree as ET
+import zipfile
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -194,21 +199,184 @@ def fetch_stock_info(
     try:
         t    = yf.Ticker(ticker_str)
         info = t.info or {}
-        return {
-            "trailingPE":     info.get("trailingPE"),
-            "debtToEquity":   info.get("debtToEquity"),
-            "revenueGrowth":  info.get("revenueGrowth"),
-            "market_cap":     info.get("marketCap", 0),
-            "sector":         info.get("sector", ""),
-            "shortName":      info.get("shortName", code),
+        result = {
+            "trailingPE":                       info.get("trailingPE"),
+            "debtToEquity":                     info.get("debtToEquity"),
+            "revenueGrowth":                    info.get("revenueGrowth"),
+            "operatingMargins":                 info.get("operatingMargins"),
+            "priceToSalesTrailing12Months":     info.get("priceToSalesTrailing12Months"),
+            "market_cap":                       info.get("marketCap", 0),
+            "sector":                           info.get("sector", ""),
+            "shortName":                        info.get("shortName", code),
         }
+
+        # KR: DART 공식 재무 데이터로 보완 (yfinance KR 재무 데이터 신뢰도 낮음)
+        if market == "KR":
+            dart = fetch_financial_data_dart(code)
+            for k, v in dart.items():
+                if v is not None:
+                    result[k] = v
+
+        return result
     except Exception as e:
         log.warning(f"[{code}] 재무 정보 수집 실패: {e}")
         return {"market_cap": 0}
 
 
 # ══════════════════════════════════════════════════════════════════
-# 수급 데이터 — Naver Finance 크롤링 (KR 전용)
+# KIS API — 한국투자증권 수급 데이터 (KR 전용)
+# ══════════════════════════════════════════════════════════════════
+
+KIS_BASE_URL = "https://openapi.koreainvestment.com:9443"
+_kis_token_cache: dict = {}   # {"token": str, "expires_at": datetime}
+
+
+def _get_kis_token() -> str | None:
+    """KIS access token 취득 (23시간 캐시, 매 실행 재발급 방지)."""
+    app_key    = os.environ.get("KIS_APP_KEY")
+    app_secret = os.environ.get("KIS_APP_SECRET")
+    if not app_key or not app_secret:
+        log.debug("KIS_APP_KEY / KIS_APP_SECRET 없음 — KIS 스킵")
+        return None
+
+    cached = _kis_token_cache
+    if cached.get("token") and cached.get("expires_at"):
+        if datetime.now() < cached["expires_at"]:
+            return cached["token"]
+
+    try:
+        resp = requests.post(
+            f"{KIS_BASE_URL}/oauth2/tokenP",
+            headers={"Content-Type": "application/json"},
+            json={
+                "grant_type": "client_credentials",
+                "appkey":     app_key,
+                "appsecret":  app_secret,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        token = resp.json().get("access_token")
+        if not token:
+            log.warning(f"KIS 토큰 응답 이상: {resp.text[:200]}")
+            return None
+        cached["token"]      = token
+        cached["expires_at"] = datetime.now() + timedelta(hours=23)
+        log.info("KIS 토큰 발급 완료")
+        return token
+    except Exception as e:
+        log.warning(f"KIS 토큰 발급 실패: {e}")
+        return None
+
+
+def _kis_headers(token: str, tr_id: str) -> dict:
+    return {
+        "authorization": f"Bearer {token}",
+        "appkey":        os.environ.get("KIS_APP_KEY", ""),
+        "appsecret":     os.environ.get("KIS_APP_SECRET", ""),
+        "tr_id":         tr_id,
+        "custtype":      "P",
+        "Content-Type":  "application/json; charset=utf-8",
+    }
+
+
+def fetch_stock_supply_demand_kis(code: str) -> pd.DataFrame:
+    """
+    KIS API: 특정 종목 기관/외인 일별 순매수 시계열 (차트 2단용).
+    반환: DataFrame (index=datetime, columns=[기관, 외인])  단위: 백만원
+    """
+    token = _get_kis_token()
+    if not token:
+        return pd.DataFrame()
+
+    try:
+        resp = requests.get(
+            f"{KIS_BASE_URL}/uapi/domestic-stock/v1/trading/inquire-investor",
+            headers=_kis_headers(token, "FHKST01010300"),
+            params={
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_INPUT_ISCD":         code,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        output = resp.json().get("output2", [])
+        if not output:
+            return pd.DataFrame()
+
+        rows = []
+        for item in output:
+            d = item.get("stck_bsop_date", "")
+            if len(d) == 8:
+                d = f"{d[:4]}-{d[4:6]}-{d[6:]}"
+            rows.append({
+                "date": d,
+                "기관": int(item.get("instn_ntby_tr_pbmn", 0) or 0),
+                "외인": int(item.get("frgn_ntby_tr_pbmn",  0) or 0),
+            })
+
+        df = pd.DataFrame(rows)
+        df["date"] = pd.to_datetime(df["date"])
+        return df.set_index("date").sort_index()
+
+    except Exception as e:
+        log.warning(f"[{code}] KIS 수급 시계열 실패: {e}")
+        return pd.DataFrame()
+
+
+def fetch_supply_demand_kis(stock_list: dict) -> dict:
+    """
+    KIS API: 관심종목 내 기관/외인 순매수 당일 TOP3.
+    Naver 스크래핑 대체 (시장 전체 대신 관심종목 기준).
+    반환: {"기관": [...], "외인": [...]}
+    """
+    result = {"기관": [], "외인": []}
+    token  = _get_kis_token()
+    if not token:
+        return result
+
+    records = []
+    for code, meta in stock_list.items():
+        name = meta.get("종목명", code)
+        try:
+            resp = requests.get(
+                f"{KIS_BASE_URL}/uapi/domestic-stock/v1/trading/inquire-investor",
+                headers=_kis_headers(token, "FHKST01010300"),
+                params={
+                    "FID_COND_MRKT_DIV_CODE": "J",
+                    "FID_INPUT_ISCD":         code,
+                },
+                timeout=10,
+            )
+            resp.raise_for_status()
+            output = resp.json().get("output2", [])
+            if output:
+                latest = output[0]   # 가장 최근 거래일
+                records.append({
+                    "종목명": name,
+                    "기관":   int(latest.get("instn_ntby_tr_pbmn", 0) or 0),
+                    "외인":   int(latest.get("frgn_ntby_tr_pbmn",  0) or 0),
+                })
+            time.sleep(0.12)   # KIS rate limit (초당 ~8콜)
+        except Exception as e:
+            log.debug(f"[{name}] KIS 수급 조회 실패: {e}")
+
+    if records:
+        df_r = pd.DataFrame(records)
+        for col, label in [("기관", "기관"), ("외인", "외인")]:
+            top = (
+                df_r[df_r[col] > 0]
+                .nlargest(3, col)[["종목명", col]]
+                .rename(columns={col: "순매수"})
+                .to_dict("records")
+            )
+            result[label] = top
+
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════
+# 수급 데이터 — Naver Finance 크롤링 (KR 전용, fallback)
 # ══════════════════════════════════════════════════════════════════
 
 def _parse_supply_table(html: str, col_name: str) -> list[dict]:
@@ -263,29 +431,171 @@ def fetch_supply_demand() -> dict:
     return result
 
 
-def fetch_stock_supply_demand(code: str) -> dict:
+def fetch_stock_supply_demand(code: str) -> pd.DataFrame:
     """
-    특정 종목의 기관/외인 일별 순매수 시계열 (차트 2단용).
-    Naver: https://finance.naver.com/item/frgn.nhn?code=005930
-    반환: DataFrame (date, 기관, 외인)
+    특정 종목 기관/외인 일별 순매수 시계열 (차트 2단용).
+    KIS API 우선, 실패 시 Naver fallback.
+    반환: DataFrame (index=datetime, columns=[기관, 외인])
     """
+    df = fetch_stock_supply_demand_kis(code)
+    if not df.empty:
+        return df
+
+    # Naver fallback
     url = f"https://finance.naver.com/item/frgn.nhn?code={code}"
     try:
         resp = requests.get(url, headers=NAVER_HEADERS, timeout=10)
         resp.encoding = "euc-kr"
-        html = resp.text
-        if "<table" not in html:
-            log.warning(f"[{code}] 수급 시계열 실패: 유효한 HTML 없음")
+        if "<table" not in resp.text:
             return pd.DataFrame()
-        tables = pd.read_html(io.StringIO(html), thousands=",")
-        # 보통 두 번째 테이블에 날짜별 기관/외인 데이터
-        for t in tables:
+        for t in pd.read_html(io.StringIO(resp.text), thousands=","):
             if "날짜" in str(t.columns.tolist()):
                 t.columns = [str(c) for c in t.columns]
                 return t
     except Exception as e:
-        log.warning(f"[{code}] 수급 시계열 실패: {e}")
+        log.warning(f"[{code}] Naver 수급 시계열 실패: {e}")
     return pd.DataFrame()
+
+
+# ══════════════════════════════════════════════════════════════════
+# DART API — 재무 데이터 (KR 전용)
+# ══════════════════════════════════════════════════════════════════
+
+DART_BASE_URL = "https://opendart.fss.or.kr/api"
+_dart_corp_codes: dict = {}   # {stock_code(6자리): corp_code(8자리)} — 프로세스 내 캐시
+
+
+def _load_dart_corp_codes() -> dict:
+    """
+    DART 전체 상장사 corp_code 매핑 (최초 1회 다운로드 후 메모리 캐시).
+    stock_code(6자리) → corp_code(8자리) 딕셔너리 반환.
+    """
+    global _dart_corp_codes
+    if _dart_corp_codes:
+        return _dart_corp_codes
+
+    api_key = os.environ.get("DART_API_KEY")
+    if not api_key:
+        log.debug("DART_API_KEY 없음 — DART 스킵")
+        return {}
+
+    try:
+        resp = requests.get(
+            f"{DART_BASE_URL}/corpCode.xml",
+            params={"crtfc_key": api_key},
+            timeout=30,
+        )
+        resp.raise_for_status()
+
+        with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
+            xml_bytes = z.read("CORPCODE.xml")
+
+        root = ET.fromstring(xml_bytes)
+        for corp in root.findall("list"):
+            sc = corp.findtext("stock_code", "").strip()
+            cc = corp.findtext("corp_code",  "").strip()
+            if sc and cc:
+                _dart_corp_codes[sc] = cc
+
+        log.info(f"DART corp_code 로드 완료: {len(_dart_corp_codes)}개 상장사")
+        return _dart_corp_codes
+    except Exception as e:
+        log.warning(f"DART corp_code 로드 실패: {e}")
+        return {}
+
+
+def _parse_dart_financials(items: list) -> dict:
+    """DART 재무제표 list → 재무 비율 dict 변환."""
+    def _to_int(s: str):
+        s = (s or "").replace(",", "").replace(" ", "")
+        return int(s) if s.lstrip("-").isdigit() else None
+
+    raw: dict[str, dict] = {}
+    for item in items:
+        name = item.get("account_nm", "").strip()
+        raw[name] = {
+            "curr": _to_int(item.get("thstrm_amount", "")),
+            "prev": _to_int(item.get("frmtrm_amount", "")),
+        }
+
+    def _get(*aliases):
+        for a in aliases:
+            if a in raw:
+                return raw[a]
+        return {}
+
+    revenue   = _get("매출액", "수익(매출액)", "영업수익", "매출")
+    op_profit = _get("영업이익", "영업이익(손실)", "영업손익")
+    debt      = _get("부채총계")
+    equity    = _get("자본총계")
+
+    result = {}
+
+    rev_curr = revenue.get("curr")
+    rev_prev = revenue.get("prev")
+    op_curr  = op_profit.get("curr")
+    dbt_curr = debt.get("curr")
+    eqt_curr = equity.get("curr")
+
+    if dbt_curr is not None and eqt_curr and eqt_curr > 0:
+        result["debtToEquity"] = round(dbt_curr / eqt_curr * 100, 1)
+
+    if op_curr is not None and rev_curr and rev_curr > 0:
+        result["operatingMargins"] = round(op_curr / rev_curr, 4)
+
+    if rev_curr is not None and rev_prev and rev_prev > 0:
+        result["revenueGrowth"] = round((rev_curr - rev_prev) / abs(rev_prev), 4)
+
+    return result
+
+
+def fetch_financial_data_dart(stock_code: str) -> dict:
+    """
+    DART: 특정 종목 재무 비율 (최근 사업보고서 기준, 연결 우선).
+    반환: {"debtToEquity", "operatingMargins", "revenueGrowth"} — 있는 것만 포함.
+    실패 또는 데이터 없으면 빈 dict (yfinance fallback 사용).
+    """
+    api_key    = os.environ.get("DART_API_KEY")
+    corp_codes = _load_dart_corp_codes()
+    corp_code  = corp_codes.get(stock_code)
+
+    if not api_key or not corp_code:
+        return {}
+
+    current_year = datetime.now().year
+
+    for year in [current_year - 1, current_year - 2]:
+        for reprt_code in ["11011", "11012"]:   # 사업보고서 → 반기보고서
+            for fs_div in ["CFS", "OFS"]:        # 연결 → 별도
+                try:
+                    resp = requests.get(
+                        f"{DART_BASE_URL}/fnlttSinglAcnt.json",
+                        params={
+                            "crtfc_key":  api_key,
+                            "corp_code":  corp_code,
+                            "bsns_year":  str(year),
+                            "reprt_code": reprt_code,
+                            "fs_div":     fs_div,
+                        },
+                        timeout=10,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+
+                    if data.get("status") != "000" or not data.get("list"):
+                        continue
+
+                    result = _parse_dart_financials(data["list"])
+                    if result:
+                        log.debug(f"[{stock_code}] DART 재무 적용 ({year}/{fs_div}): {result}")
+                        return result
+
+                except Exception as e:
+                    log.debug(f"[{stock_code}] DART 조회 실패 ({year}/{reprt_code}): {e}")
+
+                time.sleep(0.1)
+
+    return {}
 
 
 # ══════════════════════════════════════════════════════════════════

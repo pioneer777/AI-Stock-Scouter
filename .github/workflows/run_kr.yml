@@ -36,6 +36,9 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.CHAT_ID_KR }}
+          KIS_APP_KEY:        ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET:     ${{ secrets.KIS_APP_SECRET }}
+          DART_API_KEY:       ${{ secrets.DART_API_KEY }}
         run: python main.py --market KR --report SUMMARY
 
       - name: ▶️ KR FULL (17:00)
@@ -46,6 +49,9 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.CHAT_ID_KR }}
           PAGES_URL:          ${{ secrets.PAGES_URL }}
+          KIS_APP_KEY:        ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET:     ${{ secrets.KIS_APP_SECRET }}
+          DART_API_KEY:       ${{ secrets.DART_API_KEY }}
         run: python main.py --market KR --report FULL
 
       - name: 🔧 수동 실행 (FULL 기본)
@@ -54,6 +60,9 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.CHAT_ID_KR }}
           PAGES_URL:          ${{ secrets.PAGES_URL }}
+          KIS_APP_KEY:        ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET:     ${{ secrets.KIS_APP_SECRET }}
+          DART_API_KEY:       ${{ secrets.DART_API_KEY }}
         run: python main.py --market KR --report FULL
 
       # FULL 실행 후에만 signal_history + index HTML 커밋

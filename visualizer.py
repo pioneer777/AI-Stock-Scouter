@@ -1,8 +1,8 @@
 """
 visualizer.py — Plotly 3단 서브플롯 차트 생성
-  1단(58%): 캔들 + SMA + 시그널/언급/TODAY 박스
+  1단(55%): 캔들 + SMA + 시그널/언급/TODAY 박스
   2단(18%): 거래량 + 거래량MA + 수급(KR)
-  3단(24%): MACD + RSI(secondary_y)
+  3단(27%): MACD + RSI(secondary_y)
 """
 
 import logging
@@ -90,7 +90,7 @@ def generate_chart(
         rows=3, cols=1,
         shared_xaxes=True,
         vertical_spacing=0.03,
-        row_heights=[0.58, 0.18, 0.24],
+        row_heights=[0.55, 0.18, 0.27],
         specs=[
             [{"secondary_y": False}],
             [{"secondary_y": False}],
@@ -110,7 +110,12 @@ def generate_chart(
         decreasing=dict(line=dict(color="#1565C0"), fillcolor="#1565C0"),
         showlegend=False,
         name="",
-        hoverinfo="x+y",
+        hovertemplate=(
+            "<b>%{x|%Y-%m-%d}</b><br>"
+            "시가 %{open:,.0f}  고가 %{high:,.0f}<br>"
+            "저가 %{low:,.0f}  종가 %{close:,.0f}"
+            "<extra></extra>"
+        ),
     ), row=1, col=1)
 
     for col, color, width, label in SMA_STYLES:
@@ -347,10 +352,16 @@ def generate_chart(
         rangeslider=dict(visible=False),
         rangebreaks=[dict(bounds=["sat", "mon"])],
         type="date",
+        showspikes=True,
+        spikemode="across",
+        spikesnap="cursor",
+        spikecolor="#888888",
+        spikethickness=1,
+        spikedash="solid",
     )
 
     fig.update_layout(
-        height=950,
+        height=1000,
         title=dict(
             text=f"<b>{name} ({code})</b>",
             font=dict(size=16, color="#FFFFFF"),
@@ -412,13 +423,16 @@ def generate_chart(
         ),
 
         # Y축
-        yaxis=dict(**axis_common, tickformat=","),
+        yaxis=dict(**axis_common, tickformat=",",
+                   showspikes=True, spikemode="across", spikethickness=1, spikecolor="#444444"),
         yaxis2=dict(
             **axis_common,
             title=dict(text="거래량", standoff=5),
             tickformat=".2s",
+            showspikes=True, spikemode="across", spikethickness=1, spikecolor="#444444",
         ),
-        yaxis3=dict(**axis_common),
+        yaxis3=dict(**axis_common,
+                    showspikes=True, spikemode="across", spikethickness=1, spikecolor="#444444"),
         yaxis4=dict(
             range=[0, 100],
             showgrid=False, showline=False,

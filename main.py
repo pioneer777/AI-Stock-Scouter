@@ -20,6 +20,7 @@ from data_fetcher import (
     fetch_all_stocks,
     fetch_market_index,
     fetch_supply_demand,
+    fetch_supply_demand_kis,
     fetch_current_price,
 )
 from signal_detector import (
@@ -208,7 +209,7 @@ def run(market: str, report_mode: str) -> None:
 
     # ── 시장 지수 (폭발 시그널용) ─────────────────────────────────
     log.info("시장 지수 데이터 수집 중...")
-    market_index_df = fetch_market_index(market, period="3mo")
+    market_index_df = fetch_market_index(market, period="1y")
 
     # ── 전체 종목 데이터 수집 ─────────────────────────────────────
     log.info(f"종목 데이터 수집 시작 ({len(stock_list)}종목)...")
@@ -296,11 +297,22 @@ def run(market: str, report_mode: str) -> None:
     log.info("승패 테이블 집계 중...")
     pnl_table = build_pnl_table(signal_history, stock_list, market, today)
 
-    # ── 수급 데이터 (KR 전용) ─────────────────────────────────────
+    # ── 수급 데이터 (KR 전용) — KIS 우선, Naver fallback ─────────
     supply_top = {}
+    kis_failed = False
     if market == "KR":
-        log.info("수급 데이터 크롤링 중...")
-        supply_top = fetch_supply_demand()
+        log.info("수급 데이터 수집 중 (KIS → Naver fallback)...")
+        # KIS 자격증명이 설정되어 있는데 토큰 발급에 실패하면 알림
+        from data_fetcher import _get_kis_token
+        kis_key_set = bool(os.environ.get("KIS_APP_KEY"))
+        if kis_key_set and _get_kis_token() is None:
+            kis_failed = True
+            log.warning("⚠️ KIS 토큰 발급 실패 — APP key/secret 확인 필요")
+
+        supply_top = fetch_supply_demand_kis(stock_list)
+        if not supply_top.get("기관") and not supply_top.get("외인"):
+            log.info("KIS 수급 없음 — Naver fallback")
+            supply_top = fetch_supply_demand()
 
     # ── 텔레그램 메시지 생성 ──────────────────────────────────────
     pages_url = os.environ.get("PAGES_URL", "")
@@ -309,6 +321,7 @@ def run(market: str, report_mode: str) -> None:
     results = {
         "신규시그널": new_signals,
         "승패테이블": pnl_table,
+        "kis_failed":  kis_failed,
         "추세분석":   trend_buckets,
         "수급TOP":   supply_top,
     }
