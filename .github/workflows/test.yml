@@ -20,7 +20,7 @@ on:
           - FULL
           - SUMMARY
       dry_run:
-        description: "Dry Run (텔레그램 전송 안 함)"
+        description: "Dry Run (체크=텔레그램 전송 안 함 / 해제=실제 전송)"
         required: false
         default: true
         type: boolean
@@ -44,7 +44,7 @@ jobs:
       - name: 🧪 실행
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_CHAT_ID:   ${{ inputs.market == 'KR' && secrets.TEST_CHAT_ID_KR || secrets.TEST_CHAT_ID_US }}
           PAGES_URL:          ${{ secrets.PAGES_URL }}
           DRY_RUN:            ${{ inputs.dry_run }}
         run: |

@@ -35,7 +35,7 @@ jobs:
            github.event.schedule == '0 19 * * 1-5')
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.CHAT_ID_US }}
         run: python main.py --market US --report SUMMARY
 
       - name: ▶️ US FULL (07:00 KST)
@@ -44,7 +44,7 @@ jobs:
           github.event.schedule == '0 22 * * 1-5'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.CHAT_ID_US }}
           PAGES_URL:          ${{ secrets.PAGES_URL }}
         run: python main.py --market US --report FULL
 
@@ -52,7 +52,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.CHAT_ID_US }}
           PAGES_URL:          ${{ secrets.PAGES_URL }}
         run: python main.py --market US --report FULL
 
