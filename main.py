@@ -6,7 +6,7 @@ AI Stock Scouter — main.py
 환경변수:
   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
   DRY_RUN=true  (텔레그램 전송 없이 콘솔 출력만)
-  GITHUB_PAGES_URL  (index HTML 링크용)
+  PAGES_URL  (index HTML 링크용)
 """
 
 import argparse
@@ -290,7 +290,7 @@ def run(market: str, report_mode: str) -> None:
         supply_top = fetch_supply_demand()
 
     # ── 텔레그램 메시지 생성 ──────────────────────────────────────
-    pages_url = os.environ.get("GITHUB_PAGES_URL", "")
+    pages_url = os.environ.get("PAGES_URL", "")
     chart_url = f"{pages_url}/index_{market}.html" if pages_url else ""
 
     results = {

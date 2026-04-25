@@ -45,6 +45,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          PAGES_URL:          ${{ secrets.PAGES_URL }}
         run: python main.py --market US --report FULL
 
       - name: 🔧 수동 실행 (FULL 기본)
@@ -52,6 +53,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          PAGES_URL:          ${{ secrets.PAGES_URL }}
         run: python main.py --market US --report FULL
 
       # FULL 실행 후에만 signal_history + index HTML 커밋
