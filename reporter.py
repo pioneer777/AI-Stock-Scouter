@@ -1,9 +1,11 @@
 """
 reporter.py — 텔레그램 4섹션 메시지 생성 + 전송 + index HTML 생성
+섹션별 별도 메시지 전송: 1.시그널 / 2.승패테이블 / 3.수급 / 4.추세분석
 """
 
 import logging
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -34,12 +36,6 @@ SIGNAL_COLORS = {
     "폭발":   "#FF3D00",
 }
 
-DAY_KR = ["월", "화", "수", "목", "금", "토", "일"]
-
-
-# ══════════════════════════════════════════════════════════════════
-# 메시지 빌더
-# ══════════════════════════════════════════════════════════════════
 
 def _sep() -> str:
     return "━━━━━━━━━━━━━━━━━━━━━"
@@ -52,7 +48,190 @@ def _fmt_price(px: float) -> str:
 def _fmt_pnl(pnl: float) -> str:
     sign = "+" if pnl >= 0 else ""
     icon = "✅" if pnl >= 0 else "❌"
-    return f"{sign}{pnl:.1f}% {icon}"
+    return f"{sign}{pnl:.1f}%{icon}"
+
+
+def _chart_link(pages_url: str, market: str, code: str, name: str) -> str:
+    """종목별 차트 URL. pages_url 없으면 빈 문자열."""
+    if not pages_url:
+        return ""
+    filename = f"{code}_{name}.html"
+    return f"{pages_url}/charts/{market}/{filename}"
+
+
+def _linked(text: str, url: str) -> str:
+    """URL이 있으면 하이퍼링크, 없으면 텍스트 그대로."""
+    if url:
+        return f'<a href="{url}">{text}</a>'
+    return text
+
+
+# ══════════════════════════════════════════════════════════════════
+# 섹션별 메시지 빌더
+# ══════════════════════════════════════════════════════════════════
+
+def _build_sec1(new_signals: list[dict], header: str, pages_url: str, market: str) -> str:
+    """섹션 1: 핵심 시그널"""
+    lines = [header, _sep(), "", "🔥 <b>1. 핵심 시그널</b>"]
+
+    signal_codes: set[str] = set()
+
+    if not new_signals:
+        lines.append("  (오늘 발생한 시그널 없음)")
+    else:
+        by_type: dict[str, list[str]] = {k: [] for k in SIGNAL_ICONS}
+        for item in new_signals:
+            signal_codes.add(item["code"])
+            warn = " ⚠️" if item.get("outlook") == "negative" else ""
+            url  = _chart_link(pages_url, market, item["code"], item["name"])
+            for sig in item["signals"]:
+                sig_name = sig["name"] if isinstance(sig, dict) else sig
+                score    = sig.get("score", 0) if isinstance(sig, dict) else 0
+                label    = f"{_linked(item['name'], url)} ★{score}{warn}"
+                by_type.setdefault(sig_name, []).append(label)
+
+        for sig_name, icon in SIGNAL_ICONS.items():
+            names = by_type.get(sig_name, [])
+            if names:
+                pad = " " * max(0, 4 - len(sig_name))
+                lines.append(f"[{sig_name}{icon}]{pad}  {'  |  '.join(names)}")
+
+    lines.append("")
+    lines.append("  <i>그랜🟢 1~3개월 | 골든🟡 2~4주 | 응축🟣 1~6개월 | 폭발🔴 1~2주</i>")
+
+    return "\n".join(lines), signal_codes
+
+
+def _build_sec2_chunks(table: list[dict], header: str) -> list[str]:
+    """섹션 2: 승패 테이블. 20행씩 분할."""
+    if not table:
+        return ["\n".join([header, _sep(), "", "📊 <b>2. 승패 테이블</b>", "  (추적 중인 종목 없음)"])]
+
+    win  = sum(1 for r in table if r["pnl"] >= 0)
+    lose = len(table) - win
+    rate = win / len(table) * 100
+
+    sorted_table = sorted(table, key=lambda x: -x["pnl"])
+    CHUNK = 20
+    chunks_data = [sorted_table[i:i+CHUNK] for i in range(0, len(sorted_table), CHUNK)]
+    total_chunks = len(chunks_data)
+
+    msgs = []
+    for idx, rows in enumerate(chunks_data, 1):
+        part_tag = f" ({idx}/{total_chunks})" if total_chunks > 1 else ""
+        lines = [
+            header, _sep(), "",
+            f"📊 <b>2. 승패 테이블{part_tag}</b>",
+            f"<code>{'종목명':<9} {'시그널':<5} {'날짜':<6} {'진입가':>8} {'현재가':>8} {'수익률':>8}</code>",
+            "<code>" + "─" * 48 + "</code>",
+        ]
+        for r in rows:
+            sig_icon = SIGNAL_ICONS.get(r["signal"], "")
+            d = r["entry_date"][5:].replace("-", "/")
+            lines.append(
+                f"<code>"
+                f"{r['name'][:7]:<9}"
+                f"{r['signal'][:3]}{sig_icon}  "
+                f"{d}  "
+                f"{_fmt_price(r['entry_px']):>8} "
+                f"{_fmt_price(r['cur_px']):>8} "
+                f"{_fmt_pnl(r['pnl']):>9}"
+                f"</code>"
+            )
+        if idx == total_chunks:
+            lines.append("<code>" + "─" * 48 + "</code>")
+            lines.append(
+                f"전체 승률: <b>{rate:.0f}%</b> "
+                f"(승{win} / 패{lose}) | 보유 {len(table)}종목"
+            )
+        msgs.append("\n".join(lines))
+    return msgs
+
+
+def _build_sec3(supply: dict, market: str, header: str) -> str:
+    """섹션 3: 수급 분석"""
+    lines = [header, _sep(), "", "💧 <b>3. 수급 분석</b>"]
+    if market == "KR":
+        for label in ["기관", "외인"]:
+            items = supply.get(label, [])
+            lines.append(f"[{label} 순매수 TOP3]")
+            if not items:
+                lines.append("  데이터 없음")
+            else:
+                for i, item in enumerate(items[:3], 1):
+                    amt  = item.get("순매수", 0)
+                    sign = "+" if amt >= 0 else ""
+                    lines.append(f"  {i}위 {item['종목명']:<12} {sign}{amt:,}억")
+    else:
+        lines.append("  (미국 시장 — 수급 데이터 없음, 지표로 판단)")
+    return "\n".join(lines)
+
+
+def _build_sec4(trends: dict, signal_codes: set, pages_url: str, market: str,
+                header: str, chart_url: str) -> str:
+    """섹션 4: 추세 분석 + 푸터"""
+    lines = [header, _sep(), "", "📈 <b>4. 추세 분석</b>", "  <i>(섹션1 종목 자동 제외)</i>"]
+
+    has_any = False
+    for trend_name, icon in TREND_ICONS.items():
+        stocks = [s for s in trends.get(trend_name, []) if s not in signal_codes]
+        if stocks:
+            linked = []
+            for s in stocks:
+                # trends에는 현재 name(str) 또는 dict {name, code} 가능
+                if isinstance(s, dict):
+                    name = s["name"]
+                    code = s.get("code", "")
+                    url  = _chart_link(pages_url, market, code, name)
+                    linked.append(_linked(name, url))
+                else:
+                    linked.append(s)
+            lines.append(f"{icon} {trend_name}  {'  |  '.join(linked)}")
+            has_any = True
+
+    if not has_any:
+        lines.append("  (분석 데이터 없음)")
+
+    lines.append("")
+    lines.append(_sep())
+    if chart_url:
+        lines.append(f'🔗 <a href="{chart_url}">전체 차트 ({market} 클라우드 보기)</a>')
+
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════════════════
+# 공개 인터페이스
+# ══════════════════════════════════════════════════════════════════
+
+def build_messages(
+    market: str,
+    mode: str,
+    now_str: str,
+    results: dict,
+    chart_url: str = "",
+    pages_url: str = "",
+) -> list[str]:
+    """
+    섹션별 메시지 리스트 반환 (각각 별도 텔레그램 전송).
+    [섹션1, 섹션2(복수 가능), 섹션3, 섹션4]
+    """
+    mode_tag = "📊" if mode == "SUMMARY" else "📊✅"
+    header   = f"{mode_tag} <b>AI Stock Scouter - {market}</b> | {now_str}"
+
+    new_signals = results.get("신규시그널", [])
+    table       = results.get("승패테이블", [])
+    trends      = results.get("추세분석", {})
+    supply      = results.get("수급TOP", {})
+
+    sec1, signal_codes = _build_sec1(new_signals, header, pages_url, market)
+
+    msgs = [sec1]
+    msgs.extend(_build_sec2_chunks(table, header))
+    msgs.append(_build_sec3(supply, market, header))
+    msgs.append(_build_sec4(trends, signal_codes, pages_url, market, header, chart_url))
+
+    return msgs
 
 
 def build_message(
@@ -61,179 +240,24 @@ def build_message(
     now_str: str,
     results: dict,
     chart_url: str = "",
+    pages_url: str = "",
 ) -> str:
-    """
-    4섹션 텔레그램 메시지 생성.
-    results 구조:
-      신규시그널: [{code, name, signals, price, sector, outlook}]
-      승패테이블: [{name, signal, entry_date, entry_px, cur_px, pnl}]
-      추세분석:   {상승지속: [name,...], 건강한조정: [...], 횡보중: [...], 하락주의: [...]}
-      수급TOP:    {기관: [{종목명, 순매수},...], 외인: [...]}
-    """
-    lines = []
-
-    # ── 헤더 ──────────────────────────────────────────────────────
-    mode_tag = "📊" if mode == "SUMMARY" else "📊✅"
-    lines.append(f"{mode_tag} <b>AI Stock Scouter - {market}</b> | {now_str}")
-    lines.append(_sep())
-    lines.append("")
-
-    # ── 섹션 1: 핵심 시그널 ───────────────────────────────────────
-    lines.append("🔥 <b>1. 핵심 시그널</b>")
-
-    new_signals = results.get("신규시그널", [])
-    signal_codes_today = set()
-
-    if not new_signals:
-        lines.append("  (오늘 발생한 시그널 없음)")
-    else:
-        by_type: dict[str, list[str]] = {k: [] for k in SIGNAL_ICONS}
-        for item in new_signals:
-            signal_codes_today.add(item["code"])
-            warn = " ⚠️" if item.get("outlook") == "negative" else ""
-            for sig in item["signals"]:
-                sig_name = sig["name"] if isinstance(sig, dict) else sig
-                score    = sig.get("score", 0) if isinstance(sig, dict) else 0
-                label    = f"{item['name']} ★{score}{warn}"
-                by_type.setdefault(sig_name, []).append(label)
-
-        for sig_name, icon in SIGNAL_ICONS.items():
-            names = by_type.get(sig_name, [])
-            if names:
-                pad = " " * max(0, 4 - len(sig_name))
-                lines.append(f"[{sig_name}{icon}]{pad}  {' | '.join(names)}")
-
-    # 시그널 가이드 (보유 기간 안내)
-    lines.append("")
-    lines.append(
-        "  <i>그랜🟢 1~3개월 | 골든🟡 2~4주 | 응축🟣 1~6개월 | 폭발🔴 1~2주</i>"
-    )
-
-    lines.append("")
-    lines.append(_sep())
-
-    # ── 섹션 2: 승패 테이블 ───────────────────────────────────────
-    lines.append("📊 <b>2. 승패 테이블</b>")
-
-    table = results.get("승패테이블", [])
-    if not table:
-        lines.append("  (추적 중인 종목 없음)")
-    else:
-        win = sum(1 for r in table if r["pnl"] >= 0)
-        lose = len(table) - win
-        rate = win / len(table) * 100 if table else 0
-
-        lines.append(
-            f"{'종목명':<10} {'시그널':<6} {'선정일':<8} "
-            f"{'진입가':>8} {'현재가':>8} {'수익률':>10}"
-        )
-        lines.append("─" * 52)
-
-        for r in sorted(table, key=lambda x: -x["pnl"]):
-            sig_icon = SIGNAL_ICONS.get(r["signal"], "")
-            d = r["entry_date"][5:].replace("-", "/")  # "04/22"
-            lines.append(
-                f"{r['name'][:8]:<10} "
-                f"{r['signal']}{sig_icon}  "
-                f"{d}  "
-                f"{_fmt_price(r['entry_px']):>8} "
-                f"{_fmt_price(r['cur_px']):>8} "
-                f"{_fmt_pnl(r['pnl']):>12}"
-            )
-
-        lines.append("─" * 52)
-        lines.append(
-            f"전체 승률: <b>{rate:.0f}%</b> "
-            f"(승{win} / 패{lose}) | 보유 {len(table)}종목"
-        )
-
-    lines.append("")
-    lines.append(_sep())
-
-    # ── 섹션 3: 수급 분석 (KR 전용) ──────────────────────────────
-    if market == "KR":
-        lines.append("💧 <b>3. 수급 분석</b>")
-        supply = results.get("수급TOP", {})
-
-        for label in ["기관", "외인"]:
-            items = supply.get(label, [])
-            lines.append(f"[{label} 순매수 TOP3]")
-            if not items:
-                lines.append("  데이터 없음")
-            else:
-                for i, item in enumerate(items[:3], 1):
-                    amt = item.get("순매수", 0)
-                    sign = "+" if amt >= 0 else ""
-                    lines.append(
-                        f"  {i}위 {item['종목명']:<12} {sign}{amt:,}억"
-                    )
-        lines.append("")
-        lines.append(_sep())
-    else:
-        # US는 수급 없이 섹션 번호 유지
-        lines.append("💧 <b>3. 수급 분석</b>")
-        lines.append("  (미국 시장 — 수급 데이터 없음, 지표로 판단)")
-        lines.append("")
-        lines.append(_sep())
-
-    # ── 섹션 4: 추세 분석 (시그널 종목 제외) ─────────────────────
-    lines.append("📈 <b>4. 추세 분석</b>")
-    lines.append("  <i>(섹션1 종목 자동 제외)</i>")
-
-    trends = results.get("추세분석", {})
-    has_any = False
-    for trend_name, icon in TREND_ICONS.items():
-        names = [
-            n for n in trends.get(trend_name, [])
-            if n not in signal_codes_today
-        ]
-        if names:
-            lines.append(f"{icon} {trend_name}  {'  |  '.join(names)}")
-            has_any = True
-
-    if not has_any:
-        lines.append("  (분석 데이터 없음)")
-
-    lines.append("")
-    lines.append(_sep())
-
-    # ── 푸터 ──────────────────────────────────────────────────────
-    if chart_url:
-        lines.append(f'🔗 <a href="{chart_url}">전체 차트 ({market} 클라우드 보기)</a>')
-
-    return "\n".join(lines)
+    """하위 호환용 — 모든 섹션을 하나의 문자열로 합쳐 반환."""
+    return "\n\n".join(build_messages(
+        market=market, mode=mode, now_str=now_str,
+        results=results, chart_url=chart_url, pages_url=pages_url,
+    ))
 
 
 # ══════════════════════════════════════════════════════════════════
 # 텔레그램 전송
 # ══════════════════════════════════════════════════════════════════
 
-def send_telegram(text: str, dry_run: bool = False) -> bool:
-    """HTML parse_mode로 텔레그램 전송. dry_run=True면 콘솔 출력만."""
-    if dry_run:
-        print("\n" + "=" * 60)
-        print("[DRY RUN] 텔레그램 전송 미리보기:")
-        print("=" * 60)
-        # HTML 태그 제거해서 출력
-        import re
-        clean = re.sub(r"<[^>]+>", "", text)
-        print(clean)
-        print("=" * 60 + "\n")
-        return True
-
-    token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
-
-    if not token or not chat_id:
-        log.error("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID 환경변수 미설정")
-        return False
-
-    # 메시지가 4096자 초과 시 분할 전송
+def _send_one(text: str, token: str, chat_id: str) -> bool:
     max_len = 4000
     chunks  = [text[i:i+max_len] for i in range(0, len(text), max_len)]
-
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    ok  = True
+    url     = f"https://api.telegram.org/bot{token}/sendMessage"
+    ok      = True
     for chunk in chunks:
         try:
             resp = requests.post(
@@ -247,9 +271,41 @@ def send_telegram(text: str, dry_run: bool = False) -> bool:
         except Exception as e:
             log.error(f"텔레그램 전송 예외: {e}")
             ok = False
+    return ok
+
+
+def send_telegram(messages: "str | list[str]", dry_run: bool = False) -> bool:
+    """
+    섹션별 메시지 리스트 또는 단일 문자열을 텔레그램으로 전송.
+    dry_run=True면 콘솔 출력만.
+    """
+    if isinstance(messages, str):
+        messages = [messages]
+
+    if dry_run:
+        print("\n" + "=" * 60)
+        print("[DRY RUN] 텔레그램 전송 미리보기:")
+        print("=" * 60)
+        for i, msg in enumerate(messages, 1):
+            print(f"\n--- 메시지 {i}/{len(messages)} ---")
+            print(re.sub(r"<[^>]+>", "", msg))
+        print("=" * 60 + "\n")
+        return True
+
+    token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+
+    if not token or not chat_id:
+        log.error("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID 환경변수 미설정")
+        return False
+
+    ok = True
+    for msg in messages:
+        if not _send_one(msg, token, chat_id):
+            ok = False
 
     if ok:
-        log.info("텔레그램 전송 성공")
+        log.info(f"텔레그램 전송 성공 ({len(messages)}개 메시지)")
     return ok
 
 
@@ -264,10 +320,6 @@ def generate_index_html(
     charts_dir: Path,
     out_path: Path,
 ) -> None:
-    """
-    signal_history 기반으로 index_{market}.html 생성.
-    각 카드: 종목명 / 시그널 배지 / 선정일 / 진입가 / 수익률 / 차트 링크
-    """
     today = datetime.now().strftime("%Y-%m-%d")
 
     cards_html = []
@@ -276,14 +328,13 @@ def generate_index_html(
             if entry.get("유효기간만료", "") < today:
                 continue
 
-            name      = entry.get("종목명", code)
-            sig       = entry.get("시그널", "")
-            entry_dt  = entry.get("선정일", "")
-            entry_px  = entry.get("진입가", 0)
-            color     = SIGNAL_COLORS.get(sig, "#888888")
-            icon      = SIGNAL_ICONS.get(sig, "")
+            name     = entry.get("종목명", code)
+            sig      = entry.get("시그널", "")
+            entry_dt = entry.get("선정일", "")
+            entry_px = entry.get("진입가", 0)
+            color    = SIGNAL_COLORS.get(sig, "#888888")
+            icon     = SIGNAL_ICONS.get(sig, "")
 
-            # 차트 파일 경로 (상대 경로)
             chart_filename = f"{code}_{name}.html"
             chart_path     = charts_dir / market / chart_filename
             chart_link     = f"charts/{market}/{chart_filename}" if chart_path.exists() else "#"
@@ -298,7 +349,7 @@ def generate_index_html(
           <a class="btn" href="{chart_link}" target="_blank">📊 차트 보기</a>
         </div>""")
 
-    cards = "\n".join(cards_html) if cards_html else "<p style='color:#aaa'>기록된 시그널이 없습니다.</p>"
+    cards   = "\n".join(cards_html) if cards_html else "<p style='color:#aaa'>기록된 시그널이 없습니다.</p>"
     updated = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     html = f"""<!DOCTYPE html>

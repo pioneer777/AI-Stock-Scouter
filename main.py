@@ -28,7 +28,7 @@ from signal_detector import (
     classify_trend,
 )
 from visualizer import generate_chart, CHARTS_DIR
-from reporter import build_message, send_telegram, generate_index_html
+from reporter import build_messages, send_telegram, generate_index_html
 
 logging.basicConfig(
     level=logging.INFO,
@@ -313,15 +313,16 @@ def run(market: str, report_mode: str) -> None:
         "수급TOP":   supply_top,
     }
 
-    message = build_message(
+    messages = build_messages(
         market=market,
         mode=report_mode,
         now_str=now_str,
         results=results,
         chart_url=chart_url,
+        pages_url=pages_url,
     )
 
-    send_telegram(message, dry_run=dry_run)
+    send_telegram(messages, dry_run=dry_run)
 
     # ── FULL 전용: 히스토리 저장 + index HTML 생성 ────────────────
     if is_full:
