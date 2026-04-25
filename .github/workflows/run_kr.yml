@@ -1,0 +1,79 @@
+name: 🇰🇷 KR 자동 실행
+
+on:
+  schedule:
+    # ※ GitHub Actions는 UTC 기준. KST = UTC+9
+    - cron: "0 2 * * 1-5"    # KST 11:00 (장중 SUMMARY)
+    - cron: "30 5 * * 1-5"   # KST 14:30 (장중 SUMMARY)
+    - cron: "0 8 * * 1-5"    # KST 17:00 (장마감 FULL)
+
+  workflow_dispatch:  # 수동 트리거 (긴급 재실행용)
+
+permissions:
+  contents: write   # signal_history 자동 커밋용
+
+jobs:
+  run-kr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐍 Python 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: 📦 의존성 설치
+        run: pip install -r requirements.txt
+
+      - name: ▶️ KR SUMMARY (11:00 / 14:30)
+        if: |
+          github.event_name == 'schedule' &&
+          (github.event.schedule == '0 2 * * 1-5' ||
+           github.event.schedule == '30 5 * * 1-5')
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py --market KR --report SUMMARY
+
+      - name: ▶️ KR FULL (17:00)
+        if: |
+          github.event_name == 'schedule' &&
+          github.event.schedule == '0 8 * * 1-5'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py --market KR --report FULL
+
+      - name: 🔧 수동 실행 (FULL 기본)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py --market KR --report FULL
+
+      # FULL 실행 후에만 signal_history + index HTML 커밋
+      - name: 💾 기록 커밋 (FULL 전용)
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          (github.event_name == 'schedule' &&
+           github.event.schedule == '0 8 * * 1-5')
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add signal_history_KR.json index_KR.html charts/KR/ || true
+          git diff --cached --quiet || git commit -m "chore: KR FULL 자동 업데이트 $(date +'%Y-%m-%d %H:%M') KST"
+          git push
+
+      - name: 📤 차트 아티팩트 업로드
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kr-charts-${{ github.run_number }}
+          path: |
+            charts/KR/
+            signal_history_KR.json
+            index_KR.html
+          retention-days: 3

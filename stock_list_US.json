@@ -1,0 +1,42 @@
+{
+  "AAPL": {
+    "종목명": "Apple",
+    "섹터": "Technology",
+    "언급일": []
+  },
+  "MSFT": {
+    "종목명": "Microsoft",
+    "섹터": "Technology",
+    "언급일": []
+  },
+  "NVDA": {
+    "종목명": "NVIDIA",
+    "섹터": "Semiconductors",
+    "언급일": []
+  },
+  "META": {
+    "종목명": "Meta Platforms",
+    "섹터": "Communication",
+    "언급일": []
+  },
+  "AMZN": {
+    "종목명": "Amazon",
+    "섹터": "Consumer Cyclical",
+    "언급일": []
+  },
+  "GOOGL": {
+    "종목명": "Alphabet",
+    "섹터": "Communication",
+    "언급일": []
+  },
+  "JPM": {
+    "종목명": "JPMorgan Chase",
+    "섹터": "Financial",
+    "언급일": []
+  },
+  "XOM": {
+    "종목명": "ExxonMobil",
+    "섹터": "Energy",
+    "언급일": []
+  }
+}

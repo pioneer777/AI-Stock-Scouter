@@ -1,0 +1,15 @@
+{
+  "반도체": "neutral",
+  "LNG/에너지": "positive",
+  "방산": "positive",
+  "2차전지": "neutral",
+  "바이오": "neutral",
+  "금융": "positive",
+  "IT": "neutral",
+  "Technology": "neutral",
+  "Semiconductors": "neutral",
+  "Communication": "neutral",
+  "Consumer Cyclical": "neutral",
+  "Financial": "positive",
+  "Energy": "positive"
+}

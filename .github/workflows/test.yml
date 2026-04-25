@@ -1,0 +1,68 @@
+name: 🧪 Test Mode (수동 실행)
+
+on:
+  workflow_dispatch:
+    inputs:
+      market:
+        description: "분석 시장"
+        required: true
+        default: "KR"
+        type: choice
+        options:
+          - KR
+          - US
+      report:
+        description: "리포트 모드"
+        required: true
+        default: "FULL"
+        type: choice
+        options:
+          - FULL
+          - SUMMARY
+      dry_run:
+        description: "Dry Run (텔레그램 전송 안 함)"
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐍 Python 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: 📦 의존성 설치
+        run: pip install -r requirements.txt
+
+      - name: 🧪 실행
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          DRY_RUN:            ${{ inputs.dry_run }}
+        run: |
+          echo "==================================="
+          echo " 시장: ${{ inputs.market }}"
+          echo " 모드: ${{ inputs.report }}"
+          echo " Dry Run: ${{ inputs.dry_run }}"
+          echo "==================================="
+          python main.py \
+            --market ${{ inputs.market }} \
+            --report ${{ inputs.report }}
+
+      - name: 📤 차트 결과물 업로드 (아티팩트)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: charts-${{ inputs.market }}-${{ inputs.report }}-${{ github.run_number }}
+          path: |
+            charts/
+            signal_history_*.json
+            index_*.html
+          retention-days: 7

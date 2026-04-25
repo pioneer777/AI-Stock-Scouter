@@ -1,0 +1,79 @@
+name: 🇺🇸 US 자동 실행
+
+on:
+  schedule:
+    # ※ GitHub Actions는 UTC 기준. KST = UTC+9
+    - cron: "0 15 * * 1-5"   # KST 00:00 (장중 SUMMARY)
+    - cron: "0 19 * * 1-5"   # KST 04:00 (장중 SUMMARY)
+    - cron: "0 22 * * 1-5"   # KST 07:00 (장마감 FULL)
+
+  workflow_dispatch:
+
+permissions:
+  contents: write   # signal_history 자동 커밋용
+
+jobs:
+  run-us:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐍 Python 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: 📦 의존성 설치
+        run: pip install -r requirements.txt
+
+      - name: ▶️ US SUMMARY (00:00 / 04:00 KST)
+        if: |
+          github.event_name == 'schedule' &&
+          (github.event.schedule == '0 15 * * 1-5' ||
+           github.event.schedule == '0 19 * * 1-5')
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py --market US --report SUMMARY
+
+      - name: ▶️ US FULL (07:00 KST)
+        if: |
+          github.event_name == 'schedule' &&
+          github.event.schedule == '0 22 * * 1-5'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py --market US --report FULL
+
+      - name: 🔧 수동 실행 (FULL 기본)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py --market US --report FULL
+
+      # FULL 실행 후에만 signal_history + index HTML 커밋
+      - name: 💾 기록 커밋 (FULL 전용)
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          (github.event_name == 'schedule' &&
+           github.event.schedule == '0 22 * * 1-5')
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add signal_history_US.json index_US.html charts/US/ || true
+          git diff --cached --quiet || git commit -m "chore: US FULL 자동 업데이트 $(date +'%Y-%m-%d %H:%M') UTC"
+          git push
+
+      - name: 📤 차트 아티팩트 업로드
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: us-charts-${{ github.run_number }}
+          path: |
+            charts/US/
+            signal_history_US.json
+            index_US.html
+          retention-days: 3
