@@ -2,7 +2,7 @@
 signal_detector.py — 4가지 시그널 탐지 + 강도 점수 + 추세 분류
 
 각 시그널은 5개 조건 × 20점 = 100점 만점.
-MIN_SIGNAL_SCORE(75점) 이상만 텔레그램 전송 → 진짜 좋은 것만 알림.
+MIN_SIGNAL_SCORE(75점) 이상만 텔레그램 전송.
 """
 
 import logging
@@ -10,7 +10,7 @@ import pandas as pd
 
 log = logging.getLogger(__name__)
 
-MIN_SIGNAL_SCORE = 75  # 이 점수 미만은 무시
+MIN_SIGNAL_SCORE = 75
 
 SIGNAL_META = {
     "그랜드": {"color": "#00C851", "icon": "🟢", "short": "그랜", "period": "1~3개월"},
@@ -44,11 +44,19 @@ def _safe(df: pd.DataFrame, col: str, idx: int = -1):
 
 
 def _pts(val, tiers: list[tuple]) -> int:
-    """val을 기준값과 비교해 점수 반환. tiers = [(threshold, pts), ...] 내림차순."""
     for threshold, pts in tiers:
         if val >= threshold:
             return pts
     return 0
+
+
+def _passes_liquidity(df: pd.DataFrame, market: str) -> bool:
+    """일 평균 거래대금 최소 기준. KR ≥ 50억, US ≥ 100만 달러."""
+    if len(df) < 20:
+        return True
+    avg_value = (df["Close"] * df["Volume"]).iloc[-20:].mean()
+    threshold = 5_000_000_000 if market == "KR" else 1_000_000
+    return avg_value >= threshold
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -62,14 +70,20 @@ def score_grand(df: pd.DataFrame, info: dict) -> int:
       2. RSI (>60=20 / >55=15 / >50=10)
       3. 거래량 배율 (>160%=20 / >145%=15 / >threshold=10)
       4. 주가 vs SMA120 여유 (>3%=20 / >1%=15 / just above=10)
-      5. 직전 60일 낙폭 (<80%=20 / <85%=15 / <=90%=10)
+      5. 직전 60일 낙폭 (≤80%=20 / ≤85%=15 / ≤90%=10)
+
+    하드게이트 (0점 즉시 반환):
+      - 52주 고점 대비 현재가 90% 이상 (이미 고점 근처)
+      - RSI ≥ 70 (과매수)
+      - 20일 상승률 ≥ 40% (단기 급등 후 지연 반응)
+      - SMA120이 60일 전 대비 5% 이상 하락 (하락추세 SMA120)
     """
     if len(df) < 65:
         return 0
 
     vol_thr = 1.20 if is_large_cap(info) else 1.30
 
-    # 조건 1: 크로스 신선도
+    # 크로스 신선도
     cross_days = None
     for i in range(-5, 0):
         p20 = _safe(df, "SMA20", i - 1)
@@ -95,19 +109,38 @@ def score_grand(df: pd.DataFrame, info: dict) -> int:
     if close <= sma120:
         return 0
 
-    w60     = df.iloc[-60:]
-    max_px  = w60["Close"].max()
-    min_px  = w60["Close"].min()
+    # ── 하드게이트 ──────────────────────────────────────────────
+    # RSI 과매수
+    if rsi >= 70:
+        return 0
+
+    # 52주 고점 근처 (이미 많이 오른 종목)
+    lookback  = min(252, len(df))
+    yr_high   = df.iloc[-lookback:]["High"].max()
+    if close / yr_high >= 0.90:
+        return 0
+
+    # 단기 급등 후 이동평균 지연 반응
+    if len(df) >= 20:
+        close_20d = df["Close"].iloc[-20]
+        if close_20d > 0 and close / close_20d - 1 >= 0.40:
+            return 0
+
+    # SMA120 하락추세 (60일 전 대비 5% 이상 하락)
+    sma120_60d = _safe(df, "SMA120", -60)
+    if sma120_60d is not None and sma120 < sma120_60d * 0.95:
+        return 0
+    # ────────────────────────────────────────────────────────────
+
+    w60        = df.iloc[-60:]
+    max_px     = w60["Close"].max()
+    min_px     = w60["Close"].min()
     pull_ratio = min_px / max_px
 
-    s1 = _pts(cross_days, [(1, 20), (2, 20), (3, 15), (5, 10)])  # 작을수록 좋음
     s1 = 20 if cross_days <= 2 else (15 if cross_days <= 3 else 10)
-
-    s2 = _pts(rsi,   [(60, 20), (55, 15), (50, 10)])
-    s3 = _pts(vol / vma20, [(1.60, 20), (1.45, 15), (vol_thr, 10)])
+    s2 = _pts(rsi,          [(60, 20), (55, 15), (50, 10)])
+    s3 = _pts(vol / vma20,  [(1.60, 20), (1.45, 15), (vol_thr, 10)])
     s4 = _pts(close / sma120 - 1, [(0.03, 20), (0.01, 15), (0, 10)])
-
-    # 낙폭: 비율이 낮을수록(많이 빠졌을수록) 좋음
     s5 = 20 if pull_ratio <= 0.80 else (15 if pull_ratio <= 0.85 else 10)
 
     return s1 + s2 + s3 + s4 + s5
@@ -125,6 +158,11 @@ def score_golden(df: pd.DataFrame, info: dict) -> int:
       3. RSI 스윗스팟 (40~55=20 / 35~60=15)
       4. 거래량 감소 (<70%=20 / <85%=15 / <100%=10)
       5. SMA20 > SMA60 여유 (>3%=20 / >1%=15 / just above=10)
+
+    하드게이트:
+      - 현재가 > SMA20 × 1.02 (아직 눌림 시작 전)
+      - SMA20이 5일 전보다 하락 (우상향 유지 아님)
+      - SMA20/SMA60 간격이 5일 전보다 축소 (데드크로스 임박)
     """
     if len(df) < 35:
         return 0
@@ -141,14 +179,34 @@ def score_golden(df: pd.DataFrame, info: dict) -> int:
     if sma20 <= sma60:
         return 0
 
-    w30     = df.iloc[-30:]
-    rise    = w30["Close"].max() / w30["Close"].iloc[0] - 1
+    w30  = df.iloc[-30:]
+    rise = w30["Close"].max() / w30["Close"].iloc[0] - 1
     if rise < 0.10:
         return 0
 
     pull_dist = abs(close / sma20 - 1)
     if pull_dist > 0.07:
         return 0
+
+    # ── 하드게이트 ──────────────────────────────────────────────
+    # 주가가 SMA20보다 2% 이상 위 = 아직 눌림 시작 안 됨
+    if close > sma20 * 1.02:
+        return 0
+
+    sma20_5d = _safe(df, "SMA20", -5)
+    sma60_5d = _safe(df, "SMA60", -5)
+
+    # SMA20 꺾임 감지
+    if sma20_5d is not None and sma20 <= sma20_5d:
+        return 0
+
+    # SMA20/SMA60 간격 축소 = 데드크로스 임박
+    if sma20_5d is not None and sma60_5d is not None and sma60_5d > 0:
+        gap_now  = sma20 / sma60 - 1
+        gap_prev = sma20_5d / sma60_5d - 1
+        if gap_now < gap_prev:
+            return 0
+    # ────────────────────────────────────────────────────────────
 
     s1 = _pts(rise, [(0.20, 20), (0.15, 15), (0.10, 10)])
     s2 = 20 if pull_dist <= 0.03 else (15 if pull_dist <= 0.05 else 10)
@@ -166,29 +224,40 @@ def score_golden(df: pd.DataFrame, info: dict) -> int:
 def score_squeeze(df: pd.DataFrame, info: dict) -> int:
     """
     조건 (5개 × 20점):
-      1. BB폭 분위 (하위15%=20 / 하위20%=15 / 하위30%=10)
+      1. BB폭 분위 120일 기준 (하위15%=20 / 하위20%=15 / 하위30%=10)
       2. 20일 변동폭 (<5%=20 / <6%=15 / <8%=10)
       3. SMA 수렴도 (<1%=20 / <2%=15 / <3%=10)
       4. 주가 vs SMA60 위치 (>2%=20 / >1%=15 / just above=10)
       5. 거래량 후반 증가 (>120%=20 / >110%=15 / >90%=10)
+
+    하드게이트:
+      - 주가 < SMA60 (기존 조건 유지)
+      - 주가 < SMA200 (장기 하락추세 제외 — 기존엔 없었음)
     """
-    if len(df) < 65:
+    if len(df) < 125:
         return 0
 
-    close = _safe(df, "Close")
-    sma20 = _safe(df, "SMA20")
-    sma60 = _safe(df, "SMA60")
-    bbw   = _safe(df, "BB_Width")
+    close  = _safe(df, "Close")
+    sma20  = _safe(df, "SMA20")
+    sma60  = _safe(df, "SMA60")
+    sma200 = _safe(df, "SMA200")
+    bbw    = _safe(df, "BB_Width")
 
     if None in (close, sma20, sma60, bbw):
         return 0
     if close < sma60:
         return 0
 
-    w60  = df.iloc[-60:]
+    # SMA200 위 조건 (데이터 있을 때만)
+    if sma200 is not None and close < sma200:
+        return 0
+
+    # BB폭 분위를 120일 기준으로 계산 (기존 60일 → 더 의미있는 응축 기준)
+    w120 = df.iloc[-120:]
     w20  = df.iloc[-20:]
 
-    bb_pct   = (bbw - w60["BB_Width"].min()) / (w60["BB_Width"].max() - w60["BB_Width"].min() + 1e-9)
+    bb_range = w120["BB_Width"].max() - w120["BB_Width"].min()
+    bb_pct   = (bbw - w120["BB_Width"].min()) / (bb_range + 1e-9)
     rng      = w20["High"].max() / w20["Low"].min() - 1
     conv     = abs(sma20 / sma60 - 1)
     price_up = close / sma60 - 1
@@ -216,11 +285,18 @@ def score_explosion(
 ) -> int:
     """
     조건 (5개 × 20점):
-      1. 지수 20일 상승폭 (>5%=20 / >2%=15 / >0%=10)
+      1. 지수 20일 상승폭 (>5%=20 / >3%=15 / >2%=10)
       2. 개별주 조정폭 (-10~-12% 스윗스팟=20 / -8~-10%=15 / -7%=10)
       3. MACD 반등 강도 (3일 연속+가속=20 / 3일 연속=15)
       4. 주가 vs SMA200 여유 (>5%=20 / >2%=15 / just above=10)
       5. RSI 스윗스팟 (45~55=20 / 40~60=15)
+
+    하드게이트:
+      - 주가 ≤ SMA200 (장기 추세 미확인)
+      - SMA200이 60일 전보다 하락 (하락추세 SMA200)
+      - 주가 > SMA200 × 1.20 (충분히 눌리지 않음 — 조정이 얕음)
+      - 지수 20일 상승률 ≤ 2% (기존 0%에서 강화)
+      - MACD 반등 없음
     """
     if len(df) < 25:
         return 0
@@ -234,17 +310,28 @@ def score_explosion(
     if close <= sma200:
         return 0
 
+    # ── 하드게이트 ──────────────────────────────────────────────
+    # SMA200 방향성: 60일 전보다 하락이면 탈락
+    sma200_60d = _safe(df, "SMA200", -60)
+    if sma200_60d is not None and sma200 <= sma200_60d:
+        return 0
+
+    # SMA200 대비 너무 위 = 충분히 눌리지 않은 상태
+    if close > sma200 * 1.20:
+        return 0
+    # ────────────────────────────────────────────────────────────
+
     recent_high = df.iloc[-10:]["High"].max()
     pull        = close / recent_high - 1
     if pull > -0.07:
         return 0
 
-    # 지수 상승폭
+    # 지수 상승폭 (기존 >0% → >2%로 강화)
     idx_rise = 0.0
     if market_index_df is not None and len(market_index_df) >= 20:
-        idx = market_index_df["Close"]
+        idx      = market_index_df["Close"]
         idx_rise = float(idx.iloc[-1]) / float(idx.iloc[-20]) - 1
-    if idx_rise <= 0:
+    if idx_rise <= 0.02:
         return 0
 
     # MACD
@@ -261,7 +348,7 @@ def score_explosion(
     if macd_score == 0:
         return 0
 
-    s1 = _pts(idx_rise, [(0.05, 20), (0.02, 15), (0, 10)])
+    s1 = _pts(idx_rise, [(0.05, 20), (0.03, 15), (0.02, 10)])
     s2 = 20 if -0.12 <= pull <= -0.10 else (15 if pull <= -0.08 else 10)
     s3 = macd_score
     s4 = _pts(close / sma200 - 1, [(0.05, 20), (0.02, 15), (0, 10)])
@@ -278,12 +365,18 @@ def run_signal_detection(
     df: pd.DataFrame,
     info: dict,
     market_index_df: pd.DataFrame | None = None,
+    market: str = "KR",
 ) -> list[dict]:
     """
     4가지 시그널 점수 계산.
     MIN_SIGNAL_SCORE 이상만 반환: [{"name": str, "score": int}, ...]
     """
     if df is None or df.empty:
+        return []
+
+    # 유동성 필터: 일평균 거래대금 KR≥50억, US≥100만달러
+    if not _passes_liquidity(df, market):
+        log.debug("유동성 미달 — 시그널 탐지 스킵")
         return []
 
     checks = [

@@ -237,7 +237,7 @@ def run(market: str, report_mode: str) -> None:
         current_price = float(df["Close"].iloc[-1])
 
         # 시그널 탐지
-        signals = run_signal_detection(df, info, market_index_df)
+        signals = run_signal_detection(df, info, market_index_df, market=market)
 
         # 업황 경고
         sector  = meta.get("섹터", "")
