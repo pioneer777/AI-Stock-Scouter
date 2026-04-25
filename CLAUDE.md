@@ -16,7 +16,7 @@
 ## 2. 프로젝트 개요
 
 - **기능**: 한국/미국 주식 데이터 수집 → 퀀트 지표 분석 → 4가지 시그널 포착 → 텔레그램 리포트 + GitHub 클라우드 HTML 차트 생성
-- **기술 스택**: Python, Pandas, Plotly, yfinance, Telegram Bot API, GitHub Actions
+- **기술 스택**: Python, Pandas, Plotly, yfinance, KIS API, DART API, Telegram Bot API, GitHub Actions
 - **대상 종목**: 태진님이 직접 관리하는 종목 리스트 (재무 약한 기업 사전 제외)
 - **시장**: 한국(KR) / 미국(US) 분리 운영
 
@@ -66,30 +66,31 @@
   - 주가 < SMA200 (장기 하락추세 제외)
 
 점수 조건 (5개 × 20점):
-  - BB폭 분위 120일 기준 하위 30% (기존 60일 → 확대)
+  - BB폭 분위 120일 기준 하위 30%
   - 20일 변동폭 8% 이내
   - SMA20과 SMA60 간격 3% 이내
   - 거래량 감소 후 소폭 증가
-  - 주가 SMA60 이상 여유
+  - SMA200 근접도 (±3%=20 / ±5%=15 / ±10%=10 / 초과=5)  ← 장기 지지선 매집 의미
 색상: #AA00FF
+보유 목표: 1~6개월
 ```
 
-### 🔴 폭발 (Explosion) — 대상승장 중 눌림목
+### 🔴 폭발 (Explosion) — 응축 돌파형 단기 폭등 (VCP)
 ```
 하드게이트:
-  - 주가 ≤ SMA200
-  - SMA200이 60일 전보다 하락 (하락추세 SMA200)
-  - 주가 > SMA200 × 1.20 (충분히 눌리지 않음)
-  - 지수 20일 수익률 ≤ 2% (기존 0%에서 강화)
-  - MACD 3일 연속 반등 없음
+  - 주가 < SMA60
+  - 거래량 < 20일 평균 250% (거래량 폭발 없음)
+  - 응축 기간 20일 미만 (진짜 횡보 매집 없음)
+  - 오늘 종가 ≤ 응축 구간 최고가 (저항선 미돌파)
 
 점수 조건 (5개 × 20점):
-  - 지수 20일 상승폭
-  - 개별주 -7%~-12% 조정폭 스윗스팟
-  - MACD 반등 강도
-  - 주가 vs SMA200 여유
-  - RSI 40~60
+  - 거래량 배율 (>500%=20 / >400%=15 / >300%=10 / >250%=5)
+  - 돌파 강도 — 종가 vs 저항선 (>3%=20 / >1%=15 / 돌파=10)
+  - 응축 기간 (40일+=20 / 30일+=15 / 20일+=10)
+  - RSI 스윗스팟 (45~65=20 / 40~70=15)
+  - SMA200 위 여유 (>10%=20 / >5%=15 / just above=10)
 색상: #FF3D00
+보유 목표: 1~2주 단기 (국장 상한가 / 미장 +5~15%)
 ```
 
 ### 공통 유동성 필터
@@ -104,21 +105,32 @@
 중소형주:           거래량 기준 20일 평균 130% 이상
 ```
 
+### 시장 국면 필터 (_market_regime)
+```
+지수 SMA20 > SMA60 → 강세장(bull):  4가지 시그널 모두 활성
+지수 SMA20 < SMA60 → 약세장(bear):  그랜드/골든/폭발 차단, 응축만 허용
+데이터 부족 → unknown:               모든 시그널 허용 (안전 처리)
+
+중기 약세장(2~3개월 하락) 에만 반응.
+1~2주 단기 급락(관세쇼크 등)은 SMA 크로스 발생 안 하므로 자동 허용.
+지수 데이터: fetch_market_index(period="1y")  ← SMA60 계산에 충분한 기간
+```
+
 ---
 
 ## 4. 재무 필터 (자동 검증)
 
 ```python
-# 재무 필터 (yfinance 기반) — 데이터 없으면 통과 (KR 누락 잦음)
-PER > 0                    # 흑자 기업 (순손실 기업 제외)
-부채비율 < 400%             # 심각한 재무 위험 제외
-매출성장률 > -25%           # 사업 붕괴 수준 매출 급감 제외
-영업이익률 > -30%           # 심각한 적자 구조 제외
-PSR < 50배                 # 매출 대비 극단적 고평가 제외
+# 재무 필터 — KR: DART 우선 + yfinance 보완 / US: yfinance
+PER > 0                    # 흑자 기업 (순손실 기업 제외)         → yfinance
+부채비율 < 400%             # 심각한 재무 위험 제외               → DART(KR) / yfinance
+매출성장률 > -25%           # 사업 붕괴 수준 매출 급감 제외        → DART(KR) / yfinance
+영업이익률 > -30%           # 심각한 적자 구조 제외               → DART(KR) / yfinance
+PSR < 50배                 # 매출 대비 극단적 고평가 제외         → yfinance
 ```
 
-> 임계치는 느슨하게 설정 — yfinance KR 데이터 신뢰도 낮음.
-> 탈락 시 로그에 사유 출력: `[종목명] 재무 필터 탈락 — PER -3.2 (적자)`
+> KR 종목: DART 공식 재무제표 기준으로 부채비율/영업이익률/매출성장률 계산 (정확도 대폭 향상)
+> 데이터 없으면 통과 (안전 처리). 탈락 시 로그: `[종목명] 재무 필터 탈락 — PER -3.2 (적자)`
 
 > 업황/미래비전/기업 철학은 태진님이 종목 리스트에 편입할 때 1차로 직접 판단.
 > 봇은 숫자로 검증, 사람은 업황으로 검증 — 최강 조합.
@@ -207,12 +219,36 @@ signal_history_US.json
 
 ---
 
-## 8. 차트 스펙 (visualizer.py)
+## 8. 외부 API 연동
+
+### KIS API (한국투자증권) — KR 전용
+```
+용도: 기관/외인 순매수 데이터 (수급)
+토큰: APP key + APP secret → Bearer token (23시간 캐시)
+per-stock: fetch_stock_supply_demand_kis(code) → 차트 2단 기관/외인 막대
+market-wide: fetch_supply_demand_kis(stock_list) → 텔레그램 섹션3 TOP3
+fallback: KIS 실패 시 Naver 스크래핑 자동 전환
+실패 알림: KIS 토큰 발급 실패 시 텔레그램 섹션3에 ⚠️ 경고 메시지 전송
+Secrets: KIS_APP_KEY, KIS_APP_SECRET
+```
+
+### DART API (금융감독원 전자공시) — KR 전용
+```
+용도: 공식 재무제표 기반 재무 필터 (yfinance KR 데이터 대체)
+corp_code 매핑: 최초 1회 ZIP 다운로드 → 메모리 캐시 (stock_code → corp_code)
+조회 순서: 전년 사업보고서(11011) → 반기(11012), 연결(CFS) → 별도(OFS)
+제공 데이터: 부채비율, 영업이익률, 매출성장률 (PER/PSR은 yfinance 유지)
+Secrets: DART_API_KEY
+```
+
+---
+
+## 9. 차트 스펙 (visualizer.py)
 
 ### 전체 레이아웃
 ```
-높이: 950px (모바일 최적화)
-서브플롯 비중: 주가(58%) / 거래량(18%) / 보조지표(24%)
+높이: 1000px (모바일 최적화)
+서브플롯 비중: 주가(55%) / 거래량(18%) / 보조지표(27%)
 배경: 다크모드
 테두리: 4면 mirror=True, showline=True
 주말 제거: rangebreaks=[dict(bounds=["sat", "mon"])]
@@ -257,7 +293,14 @@ Plotly 설정:
   )
 ```
 
-### 차트 1단 — 주가 (58%)
+### 크로스헤어 (A안 — Plotly spike)
+```
+hovermode: "x unified" → 터치/호버 시 해당 날짜 수직선 + OHLC 표시
+spikemode: "across" → 모든 패널에 수직선 동시 표시
+OHLC hovertemplate: 시가/고가/저가/종가 한국어 표시
+```
+
+### 차트 1단 — 주가 (55%)
 ```
 캔들스틱: 상승=빨강(#FF3D00), 하락=파랑(#1565C0)
 이동평균선:
@@ -296,7 +339,7 @@ Y축 타이틀: '거래량' (가운데 고정)
 주가 이평선과 절대 혼동되지 않도록 스타일 명확히 구분
 ```
 
-### 차트 3단 — 보조지표 (24%)
+### 차트 3단 — 보조지표 (27%)
 ```
 MACD 히스토그램: 막대 (양수=초록, 음수=빨강)
 MACD선: 파랑 실선
@@ -316,7 +359,7 @@ RSI 현재값 박스: 차트 우측 최하단(y=0.03) 배치
 
 ---
 
-## 9. 텔레그램 메시지 포맷 (4섹션)
+## 10. 텔레그램 메시지 포맷 (4섹션)
 
 > 모바일 최적화. 차트는 이미지 전송 아님 → GitHub 하이퍼링크 클릭으로 연결.
 
@@ -365,7 +408,7 @@ RSI 현재값 박스: 차트 우측 최하단(y=0.03) 배치
 
 ---
 
-## 10. 리포트 구분 (main.py)
+## 11. 리포트 구분 (main.py)
 
 ```
 --report SUMMARY (장중): 시그널 기록 X, 모니터링 전용
@@ -388,7 +431,7 @@ index_US.html  ← 미국 시장 전용
 
 ---
 
-## 11. 파일 구조
+## 12. 파일 구조
 
 ```
 C:\CLAUDE_Project\ai-stock-scouter\
@@ -421,13 +464,19 @@ C:\CLAUDE_Project\ai-stock-scouter\
 
 ---
 
-## 12. GitHub Actions 운영 환경
+## 13. GitHub Actions 운영 환경
 
 ### GitHub Secrets (반드시 설정)
 ```
-TELEGRAM_BOT_TOKEN   ← KR/US 동일한 토큰 사용 OK (봇은 하나여도 무방)
-TELEGRAM_CHAT_ID     ← KR/US 같은 채팅방이면 동일값, 분리하려면 다른 값
-GITHUB_PAGES_URL     ← index HTML 링크용 (예: https://username.github.io/ai-stock-scouter)
+TELEGRAM_BOT_TOKEN   ← KR/US 동일한 토큰 사용 OK
+CHAT_ID_KR           ← KR 텔레그램 채팅방 ID
+CHAT_ID_US           ← US 텔레그램 채팅방 ID
+TEST_CHAT_ID_KR      ← 테스트 모드 KR 채팅방 ID
+TEST_CHAT_ID_US      ← 테스트 모드 US 채팅방 ID
+PAGES_URL            ← index HTML 링크용 (예: https://username.github.io/ai-stock-scouter)
+KIS_APP_KEY          ← 한국투자증권 OpenAPI APP key
+KIS_APP_SECRET       ← 한국투자증권 OpenAPI APP secret
+DART_API_KEY         ← OpenDART API key
 ```
 
 > **KR과 US는 같은 텔레그램 봇 토큰을 써도 완전히 무방.**
@@ -457,7 +506,7 @@ python main.py --market US --report FULL
 
 ---
 
-## 13. 핵심 버그 방지 규칙
+## 14. 핵심 버그 방지 규칙
 
 ```python
 # 1970년/2032년 에러 방지 — 반드시 준수
@@ -487,7 +536,7 @@ plotly_config = {
 
 ---
 
-## 14. 색상 변경 가이드
+## 15. 색상 변경 가이드
 
 색상은 운영하면서 시인성에 따라 수정 가능. 변경 시 이 파일에 반영:
 ```
@@ -500,4 +549,7 @@ plotly_config = {
 ---
 
 *마지막 업데이트: 2026-04-26*
-*버전: V1.5 (시그널 알고리즘 구조적 강화 — 하드게이트 12개 추가 / 유동성 필터 / 섹션별 텔레그램 분리전송)*
+*버전: V2.0*
+- *시그널: 시장 국면 필터 추가 / 응축 s4→SMA200 근접도 / 폭발 VCP 돌파형 재정의*
+- *데이터: KIS API(수급) + DART API(재무) 연동*
+- *차트: 높이 1000px / 비율 55-18-27 / 크로스헤어 spike 추가*
