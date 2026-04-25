@@ -266,15 +266,18 @@ def run(market: str, report_mode: str) -> None:
             except Exception:
                 pass
 
-        generate_chart(
-            df=df,
-            code=code,
-            meta=meta,
-            signals_today=signals,
-            signal_history=sig_history_for_code,
-            market=market,
-            supply_df=supply_df,
-        )
+        try:
+            generate_chart(
+                df=df,
+                code=code,
+                meta=meta,
+                signals_today=signals,
+                signal_history=sig_history_for_code,
+                market=market,
+                supply_df=supply_df,
+            )
+        except Exception as e:
+            log.warning(f"[{name}] 차트 생성 실패 — 스킵: {e}")
 
     # ── 승패 테이블 ───────────────────────────────────────────────
     log.info("승패 테이블 집계 중...")

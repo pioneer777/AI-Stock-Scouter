@@ -4,6 +4,7 @@ data_fetcher.py — 주가 데이터 수집 + 기술 지표 계산
   - Naver Finance 크롤링: 기관/외인 순매수 TOP (KR 전용)
 """
 
+import io
 import logging
 import time
 from datetime import datetime, timedelta
@@ -276,7 +277,7 @@ def fetch_stock_supply_demand(code: str) -> dict:
         if "<table" not in html:
             log.warning(f"[{code}] 수급 시계열 실패: 유효한 HTML 없음")
             return pd.DataFrame()
-        tables = pd.read_html(html, thousands=",")
+        tables = pd.read_html(io.StringIO(html), thousands=",")
         # 보통 두 번째 테이블에 날짜별 기관/외인 데이터
         for t in tables:
             if "날짜" in str(t.columns.tolist()):
