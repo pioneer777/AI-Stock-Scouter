@@ -169,7 +169,7 @@ def score_golden(df: pd.DataFrame, info: dict) -> int:
     조건 (5개 × 20점):
       1. 30일 상승폭 (>20%=20 / >15%=15 / >10%=10)
       2. SMA20 근접도 (±3%=20 / ±5%=15 / ±7%=10)
-      3. RSI 스윗스팟 (40~55=20 / 35~60=15)
+      3. RSI 다이버전스 우선 (주가↓RSI↑=20 / RSI40~55=15 / RSI35~60=10)
       4. 거래량 감소 (<70%=20 / <85%=15 / <100%=10)
       5. SMA20 > SMA60 여유 (>3%=20 / >1%=15 / just above=10)
 
@@ -222,9 +222,18 @@ def score_golden(df: pd.DataFrame, info: dict) -> int:
             return 0
     # ────────────────────────────────────────────────────────────
 
+    # RSI 불리시 다이버전스: 5일간 주가 하락 중 RSI는 상승 → 매도세 소진 신호
+    rsi_5d   = _safe(df, "RSI",   -5)
+    close_5d = _safe(df, "Close", -5)
+    bullish_div = (
+        rsi_5d is not None and close_5d is not None and close_5d > 0
+        and close <= close_5d   # 주가 하락 또는 보합
+        and rsi > rsi_5d        # RSI 상승 (매도 압력 약화)
+    )
+
     s1 = _pts(rise, [(0.20, 20), (0.15, 15), (0.10, 10)])
     s2 = 20 if pull_dist <= 0.03 else (15 if pull_dist <= 0.05 else 10)
-    s3 = 20 if 40 <= rsi <= 55 else (15 if 35 <= rsi <= 60 else 0)
+    s3 = 20 if bullish_div else (15 if 40 <= rsi <= 55 else (10 if 35 <= rsi <= 60 else 0))
     s4 = _pts(1 - vol / vma20, [(0.30, 20), (0.15, 15), (0, 10)])
     s5 = _pts(sma20 / sma60 - 1, [(0.03, 20), (0.01, 15), (0, 10)])
 
