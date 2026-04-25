@@ -63,18 +63,30 @@ def save_json(path: Path, data: dict) -> None:
 # 재무 필터
 # ══════════════════════════════════════════════════════════════════
 
-def passes_financial_filter(info: dict) -> bool:
-    """명확한 부실 기업만 제외. yfinance 데이터 누락 시 통과."""
-    per        = info.get("trailingPE")
-    debt_ratio = info.get("debtToEquity")
+def passes_financial_filter(info: dict) -> tuple[bool, str]:
+    """
+    명확한 부실 기업만 제외. yfinance 데이터 누락 시 통과.
+    반환: (통과여부, 탈락사유 or "")
+    한국 종목은 yfinance 재무 데이터가 자주 비어있으므로
+    None 체크 후 임계치는 느슨하게 — 극단적 케이스만 차단.
+    """
+    per            = info.get("trailingPE")
+    debt_ratio     = info.get("debtToEquity")
+    revenue_growth = info.get("revenueGrowth")           # -0.25 = -25%
+    op_margin      = info.get("operatingMargins")         # -0.30 = -30%
+    psr            = info.get("priceToSalesTrailing12Months")
 
-    # 적자 확실한 경우만 탈락 (PER 음수 = 순손실)
     if per is not None and per < 0:
-        return False
-    # 부채비율 400% 초과 = 심각한 재무 위험
+        return False, f"PER {per:.1f} (적자)"
     if debt_ratio is not None and debt_ratio > 400:
-        return False
-    return True
+        return False, f"부채비율 {debt_ratio:.0f}%"
+    if revenue_growth is not None and revenue_growth < -0.25:
+        return False, f"매출성장률 {revenue_growth*100:.1f}%"
+    if op_margin is not None and op_margin < -0.30:
+        return False, f"영업이익률 {op_margin*100:.1f}%"
+    if psr is not None and psr > 50:
+        return False, f"PSR {psr:.1f}배"
+    return True, ""
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -217,8 +229,9 @@ def run(market: str, report_mode: str) -> None:
         name = meta.get("종목명", code)
 
         # 재무 필터
-        if not passes_financial_filter(info):
-            log.info(f"[{name}] 재무 필터 탈락")
+        ok, reason = passes_financial_filter(info)
+        if not ok:
+            log.info(f"[{name}] 재무 필터 탈락 — {reason}")
             continue
 
         current_price = float(df["Close"].iloc[-1])
