@@ -92,13 +92,22 @@ def build_message(
             signal_codes_today.add(item["code"])
             warn = " ⚠️" if item.get("outlook") == "negative" else ""
             for sig in item["signals"]:
-                by_type.setdefault(sig, []).append(f"{item['name']}{warn}")
+                sig_name = sig["name"] if isinstance(sig, dict) else sig
+                score    = sig.get("score", 0) if isinstance(sig, dict) else 0
+                label    = f"{item['name']} ★{score}{warn}"
+                by_type.setdefault(sig_name, []).append(label)
 
         for sig_name, icon in SIGNAL_ICONS.items():
             names = by_type.get(sig_name, [])
             if names:
                 pad = " " * max(0, 4 - len(sig_name))
                 lines.append(f"[{sig_name}{icon}]{pad}  {' | '.join(names)}")
+
+    # 시그널 가이드 (보유 기간 안내)
+    lines.append("")
+    lines.append(
+        "  <i>그랜🟢 1~3개월 | 골든🟡 2~4주 | 응축🟣 1~6개월 | 폭발🔴 1~2주</i>"
+    )
 
     lines.append("")
     lines.append(_sep())

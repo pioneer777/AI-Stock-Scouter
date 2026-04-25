@@ -64,16 +64,15 @@ def save_json(path: Path, data: dict) -> None:
 # ══════════════════════════════════════════════════════════════════
 
 def passes_financial_filter(info: dict) -> bool:
-    """PER > 0 / 부채비율 < 200% / 매출YoY > -10%"""
-    per            = info.get("trailingPE")
-    debt_ratio     = info.get("debtToEquity")
-    revenue_growth = info.get("revenueGrowth")
+    """명확한 부실 기업만 제외. yfinance 데이터 누락 시 통과."""
+    per        = info.get("trailingPE")
+    debt_ratio = info.get("debtToEquity")
 
-    if per is not None and per <= 0:
+    # 적자 확실한 경우만 탈락 (PER 음수 = 순손실)
+    if per is not None and per < 0:
         return False
-    if debt_ratio is not None and debt_ratio > 200:
-        return False
-    if revenue_growth is not None and revenue_growth < -0.10:
+    # 부채비율 400% 초과 = 심각한 재무 위험
+    if debt_ratio is not None and debt_ratio > 400:
         return False
     return True
 
@@ -247,8 +246,9 @@ def run(market: str, report_mode: str) -> None:
 
             # FULL 모드에서만 히스토리 기록
             if is_full:
+                signal_names = [s["name"] for s in signals]
                 signal_history = record_signals(
-                    signal_history, code, name, signals, current_price, today
+                    signal_history, code, name, signal_names, current_price, today
                 )
         else:
             # 추세 분류 (시그널 없는 종목만 섹션4)

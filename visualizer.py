@@ -346,7 +346,6 @@ def generate_chart(
         **axis_common,
         rangeslider=dict(visible=False),
         rangebreaks=[dict(bounds=["sat", "mon"])],
-        showticklabels=False,
         type="date",
     )
 
