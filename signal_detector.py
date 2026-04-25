@@ -73,6 +73,7 @@ def score_grand(df: pd.DataFrame, info: dict) -> int:
       5. 직전 60일 낙폭 (≤80%=20 / ≤85%=15 / ≤90%=10)
 
     하드게이트 (0점 즉시 반환):
+      - 크로스 직전 60일 중 SMA20<SMA60 일수 20일 미만 (상승장 중 크로스 = 반전 아님)
       - 52주 고점 대비 현재가 90% 이상 (이미 고점 근처)
       - RSI ≥ 70 (과매수)
       - 20일 상승률 ≥ 40% (단기 급등 후 지연 반응)
@@ -97,6 +98,19 @@ def score_grand(df: pd.DataFrame, info: dict) -> int:
             break
     if cross_days is None:
         return 0
+
+    # ── 하드게이트 1: 크로스 전 하락/횡보 확인 ──────────────────────
+    # 크로스 직전 60일 중 최소 20일 이상 SMA20 < SMA60 이어야 진짜 반전.
+    # 하락 후 단기 회복(20~30일 base)과 장기 횡보(40~60일 base) 모두 포함.
+    # 이 조건이 없으면 이미 상승 중인 종목이 잠깐 조정 후 재돌파해도 통과됨.
+    _pre_end   = -(cross_days + 1)   # 크로스 바로 전날
+    _pre_start = -(cross_days + 61)  # 그보다 60일 전
+    pre_cross  = df.iloc[_pre_start:_pre_end]
+    if len(pre_cross) >= 30:
+        days_below = (pre_cross["SMA20"] < pre_cross["SMA60"]).sum()
+        if days_below < 20:
+            return 0
+    # ────────────────────────────────────────────────────────────────
 
     rsi    = _safe(df, "RSI")
     vol    = _safe(df, "Volume")
