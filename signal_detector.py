@@ -488,9 +488,10 @@ def run_signal_detection(
         log.debug("유동성 미달 — 시그널 탐지 스킵")
         return []
 
-    # 시장 국면 필터: 약세장에서는 그랜드/골든/폭발 스킵 (응축만 허용)
+    # 시장 국면 필터: 약세장에서는 골든/폭발 스킵
+    # 그랜드는 약세장 바닥권 반전 포착이 핵심 — 종목 자체 SMA크로스가 이미 엄격히 필터링
     regime    = _market_regime(market_index_df)
-    bear_skip = {"그랜드", "골든", "폭발"}
+    bear_skip = {"골든", "폭발"}
 
     checks = [
         ("그랜드", score_grand,     (df, info)),
