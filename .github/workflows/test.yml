@@ -24,6 +24,11 @@ on:
         required: false
         default: true
         type: boolean
+      clear_history:
+        description: "시그널 히스토리 초기화 (체크=signal_history 파일 비우고 시작)"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   test:
@@ -40,6 +45,13 @@ jobs:
 
       - name: 📦 의존성 설치
         run: pip install -r requirements.txt
+
+      - name: 🗑️ 히스토리 초기화 (옵션)
+        if: ${{ inputs.clear_history == true }}
+        run: |
+          echo "{}" > signal_history_KR.json
+          echo "{}" > signal_history_US.json
+          echo "✅ signal_history 초기화 완료"
 
       - name: 🧪 실행
         env:

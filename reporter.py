@@ -46,8 +46,10 @@ def _fmt_price(px: float) -> str:
 
 
 def _fmt_pnl(pnl: float) -> str:
-    sign = "+" if pnl >= 0 else ""
-    icon = "✅" if pnl >= 0 else "❌"
+    if abs(pnl) < 0.05:
+        return "  ±0.0%➖"
+    sign = "+" if pnl > 0 else ""
+    icon = "✅" if pnl > 0 else "❌"
     return f"{sign}{pnl:.1f}%{icon}"
 
 
@@ -97,7 +99,7 @@ def _build_sec1(new_signals: list[dict], header: str, pages_url: str, market: st
                 lines.append(f"[{sig_name}{icon}]{pad}  {'  |  '.join(names)}")
 
     lines.append("")
-    lines.append("  <i>그랜🟢 1~3개월 | 골든🟡 2~4주 | 응축🟣 1~6개월 | 폭발🔴 1~2주</i>")
+    lines.append("  <i>그랜드🟢 1~3개월 | 골든🟡 2~4주 | 응축🟣 1~6개월 | 폭발🔴 1~2주</i>")
 
     return "\n".join(lines), signal_codes
 
@@ -180,19 +182,25 @@ def _build_sec4(trends: dict, signal_codes: set, pages_url: str, market: str,
 
     has_any = False
     for trend_name, icon in TREND_ICONS.items():
-        stocks = [s for s in trends.get(trend_name, []) if s not in signal_codes]
+        raw = trends.get(trend_name, [])
+        stocks = []
+        for s in raw:
+            s_code = s["code"] if isinstance(s, dict) else s
+            if s_code not in signal_codes:
+                stocks.append(s)
+
         if stocks:
             linked = []
             for s in stocks:
-                # trends에는 현재 name(str) 또는 dict {name, code} 가능
                 if isinstance(s, dict):
-                    name = s["name"]
-                    code = s.get("code", "")
-                    url  = _chart_link(pages_url, market, code, name)
-                    linked.append(_linked(name, url))
+                    s_name = s["name"]
+                    s_code = s.get("code", "")
+                    url    = _chart_link(pages_url, market, s_code, s_name)
+                    linked.append(_linked(s_name, url))
                 else:
                     linked.append(s)
-            lines.append(f"{icon} {trend_name}  {'  |  '.join(linked)}")
+            lines.append(f"{icon} <b>{trend_name}</b>")
+            lines.append("  " + " | ".join(linked))
             has_any = True
 
     if not has_any:

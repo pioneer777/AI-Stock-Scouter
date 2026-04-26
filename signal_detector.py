@@ -115,15 +115,20 @@ def score_grand(df: pd.DataFrame, info: dict) -> int:
         return 0
 
     # ── 하드게이트 1: 크로스 전 하락/횡보 확인 ──────────────────────
-    # 크로스 직전 60일 중 최소 20일 이상 SMA20 < SMA60 이어야 진짜 반전.
-    # 하락 후 단기 회복(20~30일 base)과 장기 횡보(40~60일 base) 모두 포함.
-    # 이 조건이 없으면 이미 상승 중인 종목이 잠깐 조정 후 재돌파해도 통과됨.
-    _pre_end   = -(cross_days + 1)   # 크로스 바로 전날
-    _pre_start = -(cross_days + 61)  # 그보다 60일 전
+    _pre_end   = -(cross_days + 1)
+    _pre_start = -(cross_days + 61)
     pre_cross  = df.iloc[_pre_start:_pre_end]
     if len(pre_cross) >= 30:
         days_below = (pre_cross["SMA20"] < pre_cross["SMA60"]).sum()
         if days_below < 20:
+            return 0
+
+    # ── 하드게이트 2: 크로스 시점에 SMA60이 여전히 상승 중이면 반전 아님 ──
+    # 장기 우상향 종목이 잠깐 눌렸다 재돌파하는 경우를 차단.
+    # SMA60이 30일 전보다 3% 이상 상승 중 = 기존 상승장 연속 = 그랜드 아님.
+    sma60_30d = _safe(df, "SMA60", -(cross_days + 30))
+    if sma60_30d is not None and sma60_30d > 0:
+        if sma60 > sma60_30d * 1.03:
             return 0
     # ────────────────────────────────────────────────────────────────
 
@@ -132,6 +137,7 @@ def score_grand(df: pd.DataFrame, info: dict) -> int:
     vma20  = _safe(df, "Volume_MA20")
     close  = _safe(df, "Close")
     sma120 = _safe(df, "SMA120")
+    sma200 = _safe(df, "SMA200")
 
     if None in (rsi, vol, vma20, close, sma120):
         return 0
@@ -147,6 +153,11 @@ def score_grand(df: pd.DataFrame, info: dict) -> int:
     lookback  = min(252, len(df))
     yr_high   = df.iloc[-lookback:]["High"].max()
     if close / yr_high >= 0.90:
+        return 0
+
+    # 그랜드 대전제: 진짜 바닥권 = SMA200(10개월 평균) 이하여야 함
+    # SMA200 위에 있으면 장기적으로 상승추세 중 = 그랜드 아님
+    if sma200 is not None and close > sma200:
         return 0
 
     # 단기 급등 후 이동평균 지연 반응
@@ -211,6 +222,12 @@ def score_golden(df: pd.DataFrame, info: dict) -> int:
     w30  = df.iloc[-30:]
     rise = w30["Close"].max() / w30["Close"].iloc[0] - 1
     if rise < 0.10:
+        return 0
+
+    # 골든 대전제: 상승 후 실제로 눌린 것 = 30일 고점에서 3% 이상 하락 확인
+    # 고점 바로 아래에서 발생하면 아직 눌림이 아님
+    peak_30 = w30["High"].max()
+    if close >= peak_30 * 0.97:
         return 0
 
     pull_dist = abs(close / sma20 - 1)

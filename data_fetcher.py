@@ -12,7 +12,7 @@ import os
 import time
 import xml.etree.ElementTree as ET
 import zipfile
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import numpy as np
 import pandas as pd
@@ -72,14 +72,15 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     v = df["Volume"]
 
     # ── 이동평균선 ────────────────────────────────────────────────
-    df["SMA20"]  = c.rolling(20).mean()
-    df["SMA60"]  = c.rolling(60).mean()
-    df["SMA120"] = c.rolling(120).mean()
-    df["SMA200"] = c.rolling(200).mean()
+    # min_periods=1: 데이터 시작부터 SMA 표시 (전체 기간 뷰에서 SMA 공백 방지)
+    df["SMA20"]  = c.rolling(20,  min_periods=1).mean()
+    df["SMA60"]  = c.rolling(60,  min_periods=1).mean()
+    df["SMA120"] = c.rolling(120, min_periods=1).mean()
+    df["SMA200"] = c.rolling(200, min_periods=1).mean()
 
     # ── 거래량 이동평균 ───────────────────────────────────────────
-    df["Volume_MA20"]  = v.rolling(20).mean()
-    df["Volume_MA200"] = v.rolling(200).mean()
+    df["Volume_MA20"]  = v.rolling(20,  min_periods=1).mean()
+    df["Volume_MA200"] = v.rolling(200, min_periods=1).mean()
 
     # ── RSI (14일) ────────────────────────────────────────────────
     delta  = c.diff()
@@ -398,27 +399,33 @@ def _parse_supply_table(html: str, col_name: str) -> list[dict]:
     return items
 
 
+def _last_business_day_str() -> str:
+    """오늘이 주말이면 직전 금요일, 평일이면 어제 기준 Naver 날짜 파라미터 반환 (YYYYMMDD)."""
+    d = date.today()
+    if d.weekday() == 5:    # 토요일 → 금요일
+        d -= timedelta(days=1)
+    elif d.weekday() == 6:  # 일요일 → 금요일
+        d -= timedelta(days=2)
+    return d.strftime("%Y%m%d")
+
+
 def fetch_supply_demand() -> dict:
     """
     Naver Finance 기관/외인 순매수 TOP3 크롤링.
+    주말/공휴일에는 직전 거래일 데이터를 date 파라미터로 요청.
     반환: {"기관": [...], "외인": [...]}
     """
     result = {"기관": [], "외인": []}
+    bday = _last_business_day_str()
 
-    # 기관 순매수 (sosok=0: 전체, type=P: 기관순매수)
-    urls = {
-        "기관": "https://finance.naver.com/sise/sise_quant.nhn?sosok=0",
-        "외인": "https://finance.naver.com/sise/sise_quant.nhn?sosok=0",
-    }
-
-    # Naver 수급 전용 API (더 안정적)
+    # Naver 수급 전용 API — date 파라미터로 직전 거래일 지정
     supply_url_template = (
         "https://finance.naver.com/sise/sise_investment.nhn"
-        "?type={type_}&sosok=0"
+        "?type={type_}&sosok=0&date={date_}"
     )
 
     for label, type_code in [("기관", "P"), ("외인", "A")]:
-        url = supply_url_template.format(type_=type_code)
+        url = supply_url_template.format(type_=type_code, date_=bday)
         try:
             resp = requests.get(url, headers=NAVER_HEADERS, timeout=10)
             resp.encoding = "euc-kr"

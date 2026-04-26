@@ -267,7 +267,7 @@ def run(market: str, report_mode: str) -> None:
         else:
             # 추세 분류 (시그널 없는 종목만 섹션4)
             trend = classify_trend(df)
-            trend_buckets[trend].append(name)
+            trend_buckets[trend].append({"name": name, "code": code})
 
         # 차트 생성
         sig_history_for_code = signal_history.get(code, [])
