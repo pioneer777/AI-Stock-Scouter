@@ -40,8 +40,24 @@ SMA_STYLES = [
     ("SMA200", "#E91E63", 2.5, "SMA200"),
 ]
 
-# 기간 버튼 클릭 시: 우측 5% 여백 + Y축 자동 스케일
+# 기간 버튼 클릭 시: 우측 3.5% 여백 + Y축 자동 스케일 + 모바일 최적화
 _RANGE_PAD_JS = """\
+(function () {
+    if (!document.querySelector('meta[name="viewport"]')) {
+        var _m = document.createElement('meta');
+        _m.name = 'viewport';
+        _m.content = 'width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no';
+        document.head.appendChild(_m);
+    }
+    var _gd0 = document.getElementById('chart');
+    function _fitH() {
+        if (_gd0 && window.innerHeight > 0)
+            Plotly.relayout(_gd0, {height: Math.max(500, window.innerHeight)});
+    }
+    window.addEventListener('resize', _fitH);
+    setTimeout(_fitH, 150);
+}());
+
 (function () {
     var gd = document.getElementById('chart');
     if (!gd) return;
@@ -72,25 +88,25 @@ _RANGE_PAD_JS = """\
 
     function buildUpdate(ms0, ms1) {
         var upd = {};
-        // X 우측 여백
-        var pad = Math.min((ms1 - ms0) * 0.05, 30 * 86400000);
+        // X 우측 3.5% 여백 (좌측 0%)
+        var pad = Math.min((ms1 - ms0) * 0.035, 30 * 86400000);
         var padEnd = new Date(ms1 + pad).toISOString().slice(0, 10);
         upd['xaxis.range[1]'] = padEnd;
 
-        // Y1: 주가 (위 5%, 아래 8% 여유)
+        // Y1: 주가 (위 4%, 아래 2% 여유)
         var p1 = yBounds('y', ms0, ms1 + pad);
         if (p1) {
             var r1 = Math.max(p1[1] - p1[0], p1[0] * 0.01);
-            upd['yaxis.range'] = [p1[0] - r1 * 0.05, p1[1] + r1 * 0.08];
+            upd['yaxis.range'] = [p1[0] - r1 * 0.02, p1[1] + r1 * 0.04];
         }
-        // Y2: 거래량 (0부터 최대값 × 1.15)
+        // Y2: 거래량 (0부터 최대값 × 1.10)
         var p2 = yBounds('y2', ms0, ms1 + pad);
-        if (p2) upd['yaxis2.range'] = [0, p2[1] * 1.15];
-        // Y3: MACD (위아래 15% 여유)
+        if (p2) upd['yaxis2.range'] = [0, p2[1] * 1.10];
+        // Y3: MACD (위아래 10% 여유)
         var p3 = yBounds('y3', ms0, ms1 + pad);
         if (p3) {
             var r3 = Math.max(p3[1] - p3[0], Math.abs(p3[0] || 0.01) * 0.2);
-            upd['yaxis3.range'] = [p3[0] - r3 * 0.15, p3[1] + r3 * 0.15];
+            upd['yaxis3.range'] = [p3[0] - r3 * 0.10, p3[1] + r3 * 0.10];
         }
         return upd;
     }
@@ -176,8 +192,8 @@ def generate_chart(
     mentions     = meta.get("언급일", [])
     today        = datetime.now()
     one_year_ago = today - timedelta(days=365)
-    # 기본 1Y 뷰 우측 5% 여백 (18일 ≈ 365 × 0.05)
-    range_end    = today + timedelta(days=18)
+    # 기본 1Y 뷰 우측 3.5% 여백 (13일 ≈ 365 × 0.035)
+    range_end    = today + timedelta(days=13)
 
     # ── 서브플롯 ──────────────────────────────────────────────────
     fig = make_subplots(
@@ -222,6 +238,13 @@ def generate_chart(
                 hoverinfo="skip",
             ), row=1, col=1)
 
+    # 범례 구분자: 주가 | 시그널
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None], mode="markers",
+        marker=dict(opacity=0, size=1), name="│",
+        showlegend=True, hoverinfo="skip",
+    ), row=1, col=1)
+
     # 시그널 범례용 더미 트레이스
     for sig_name, sig_color in SIGNAL_COLORS.items():
         fig.add_trace(go.Scatter(
@@ -232,6 +255,13 @@ def generate_chart(
             showlegend=True,
             hoverinfo="skip",
         ), row=1, col=1)
+
+    # 범례 구분자: 시그널 | MACD/RSI
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None], mode="markers",
+        marker=dict(opacity=0, size=1), name="│",
+        showlegend=True, hoverinfo="skip",
+    ), row=1, col=1)
 
     # ═════════════════════════════════════════════════════════════
     # 2단: 거래량 + 거래량 이평선
@@ -302,6 +332,13 @@ def generate_chart(
             hoverinfo="skip",
         ), row=3, col=1)
 
+    # 범례 구분자: MACD | RSI
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None], mode="markers",
+        marker=dict(opacity=0, size=1), name="│",
+        showlegend=True, hoverinfo="skip",
+    ), row=3, col=1)
+
     if "RSI" in df.columns:
         fig.add_trace(go.Scatter(
             x=df.index, y=df["RSI"],
@@ -321,43 +358,45 @@ def generate_chart(
             ), row=3, col=1, secondary_y=True)
 
     # ═════════════════════════════════════════════════════════════
-    # 어노테이션: 언급일 + 시그널 박스 + TODAY
+    # 어노테이션: TODAY > 시그널 > 언급일 순으로 날짜별 스태킹
+    # 같은 날짜 박스끼리 겹치지 않도록 ay를 위로 쌓음
     # ═════════════════════════════════════════════════════════════
 
     annotations = []
     shapes      = []
 
-    # 언급일 박스 + 세로 점선
-    for mention in mentions:
-        m_date  = mention.get("날짜", "")
-        m_ord   = mention.get("차수", "")
-        high    = _get_high_at(df, m_date)
-        m_close = _get_close_at(df, m_date)
-        if high is None:
-            continue
+    _AY_BASE = -40   # 첫 박스 (캔들에 가장 가까움)
+    _AY_STEP = 55    # 박스 간 간격 (px)
+    _ay_slots: dict = {}  # date_str → 다음 사용할 ay
 
-        price_line = f"<br>{m_close:,.0f}" if m_close else ""
+    def _next_ay(date_str: str) -> int:
+        if date_str not in _ay_slots:
+            _ay_slots[date_str] = _AY_BASE
+        else:
+            _ay_slots[date_str] -= _AY_STEP
+        return _ay_slots[date_str]
+
+    # ── TODAY 박스 먼저 등록 (항상 캔들에 가장 가까이) ──────────
+    latest_date  = df.index[-1] if not df.empty else None
+    latest_close = float(df["Close"].iloc[-1]) if not df.empty else 0
+    latest_high  = float(df["High"].iloc[-1])  if not df.empty else 0
+
+    if not df.empty:
+        today_date_str = latest_date.strftime("%Y-%m-%d")
         annotations.append(dict(
-            x=m_date, y=high,
+            x=latest_date, y=latest_high,
             xref="x", yref="y",
-            text=f"<b>{m_ord}_{_date_label(m_date)}</b>{price_line}",
+            text=f"<b>TODAY: {latest_close:,.0f}</b>",
             showarrow=True, arrowhead=2,
-            arrowcolor="#444444", arrowwidth=1.5,
-            ax=0, ay=-65,
-            bgcolor="#FFFFFF",
-            font=dict(color="#000000", size=10),
-            bordercolor="#444444", borderwidth=1.5,
+            arrowcolor="#222222", arrowwidth=1.5,
+            ax=0, ay=_next_ay(today_date_str),
+            bgcolor="#222222",
+            font=dict(color="#FFFFFF", size=11),
+            bordercolor="#FFFFFF", borderwidth=1.5,
             borderpad=4,
         ))
-        shapes.append(dict(
-            type="line",
-            x0=m_date, x1=m_date,
-            y0=0, y1=1,
-            yref="paper", xref="x",
-            line=dict(color="#BBBBBB", width=1, dash="dash"),
-        ))
 
-    # 시그널 박스 (히스토리 + 오늘 SUMMARY 모드)
+    # ── 시그널 박스 (히스토리 + 오늘 SUMMARY 모드) ───────────────
     today_str = today.strftime("%Y-%m-%d")
     all_sig_entries = list(signal_history)
 
@@ -383,59 +422,67 @@ def generate_chart(
         high = _get_high_at(df, date_str)
         if high is None:
             continue
-        for i, entry in enumerate(entries):
+        for entry in entries:
             sig   = entry.get("시그널", "")
             px    = entry.get("진입가", 0)
             color = SIGNAL_COLORS.get(sig, "#888888")
             short = SIGNAL_SHORT.get(sig, str(sig)[:3])
-            ay    = -60 - i * 55
-
             annotations.append(dict(
                 x=date_str, y=high,
                 xref="x", yref="y",
                 text=f"<b>{short}_{_date_label(date_str)}</b><br>{px:,.0f}",
                 showarrow=True, arrowhead=2,
                 arrowcolor=color, arrowwidth=1.5,
-                ax=0, ay=ay,
+                ax=0, ay=_next_ay(date_str),
                 bgcolor=color,
                 font=dict(color="#FFFFFF", size=10),
                 bordercolor=color, borderwidth=1,
                 borderpad=4,
             ))
 
-    # TODAY 박스
-    if not df.empty:
-        latest_date  = df.index[-1]
-        latest_close = float(df["Close"].iloc[-1])
-        latest_high  = float(df["High"].iloc[-1])
-
+    # ── 언급일 박스 + 세로 점선 ────────────────────────────────
+    for mention in mentions:
+        m_date  = mention.get("날짜", "")
+        m_ord   = mention.get("차수", "")
+        high    = _get_high_at(df, m_date)
+        m_close = _get_close_at(df, m_date)
+        if high is None:
+            continue
+        price_line = f"<br>{m_close:,.0f}" if m_close else ""
         annotations.append(dict(
-            x=latest_date, y=latest_high,
+            x=m_date, y=high,
             xref="x", yref="y",
-            text=f"<b>TODAY: {latest_close:,.0f}</b>",
+            text=f"<b>{m_ord}_{_date_label(m_date)}</b>{price_line}",
             showarrow=True, arrowhead=2,
-            arrowcolor="#222222", arrowwidth=1.5,
-            ax=0, ay=-40,
-            bgcolor="#222222",
-            font=dict(color="#FFFFFF", size=11),
-            bordercolor="#FFFFFF", borderwidth=1.5,
+            arrowcolor="#444444", arrowwidth=1.5,
+            ax=0, ay=_next_ay(m_date),
+            bgcolor="#FFFFFF",
+            font=dict(color="#000000", size=10),
+            bordercolor="#444444", borderwidth=1.5,
             borderpad=4,
         ))
+        shapes.append(dict(
+            type="line",
+            x0=m_date, x1=m_date,
+            y0=0, y1=1,
+            yref="paper", xref="x",
+            line=dict(color="#BBBBBB", width=1, dash="dash"),
+        ))
 
-    # RSI 현재값 박스 — 3단 우측, 실제 RSI 값 위치에 표시
+    # ── RSI 현재값 박스 — 3단 우측상단 모서리 고정 ───────────────
     if "RSI" in df.columns and df["RSI"].notna().any():
         latest_rsi = float(df["RSI"].dropna().iloc[-1])
         rsi_color  = "#EF5350" if latest_rsi >= 70 else ("#1E88E5" if latest_rsi <= 30 else "#555555")
         annotations.append(dict(
-            x=df.index[-1], y=latest_rsi,
-            xref="x", yref="y4",
+            x=0.99, xref="x domain",
+            y=0.95, yref="y3 domain",
             text=f"<b>RSI {latest_rsi:.0f}</b>",
             showarrow=False,
             bgcolor=rsi_color,
             font=dict(color="#FFFFFF", size=10),
             bordercolor=rsi_color, borderwidth=1,
             borderpad=4,
-            xanchor="left", yanchor="middle",
+            xanchor="right", yanchor="top",
         ))
 
     # ═════════════════════════════════════════════════════════════
@@ -475,11 +522,11 @@ def generate_chart(
         dragmode=False,
         hovermode="x unified",
         hoverlabel=dict(bgcolor="#F5F5F5", font_color="#222222", bordercolor="#CCCCCC"),
-        margin=dict(l=65, r=65, t=110, b=50),
+        margin=dict(l=65, r=65, t=125, b=50),
 
         legend=dict(
             orientation="h",
-            y=1.07, x=0,
+            y=1.10, x=0,
             xanchor="left", yanchor="bottom",
             font=dict(size=10, color="#333333"),
             bgcolor="rgba(255,255,255,0.9)",
