@@ -279,16 +279,19 @@ def score_golden(df: pd.DataFrame, info: dict) -> int:
 
 def score_squeeze(df: pd.DataFrame, info: dict) -> int:
     """
-    조건 (5개 × 20점):
+    세력 매집 구간 포착 — 위치(SMA 위/아래) 무관하게 수렴 자체가 본질.
+    바닥 횡보(SMA200 아래)와 1차 상승 후 눌림목 모두 해당.
+
+    하드게이트 (수렴 강도 필수):
+      - BB폭 분위 > 30% (수렴 아님)
+      - 20일 변동폭 > 8% (횡보 아님)
+
+    점수 (5개 × 20점):
       1. BB폭 분위 120일 기준 (하위15%=20 / 하위20%=15 / 하위30%=10)
       2. 20일 변동폭 (<5%=20 / <6%=15 / <8%=10)
-      3. SMA 수렴도 (<1%=20 / <2%=15 / <3%=10)
-      4. SMA200 근접도 (±3%=20 / ±5%=15 / ±10%=10 / 초과=5 / SMA200없으면 SMA60 fallback)
+      3. SMA20/SMA60 수렴도 (<1%=20 / <2%=15 / <3%=10)
+      4. SMA200 근접도 (±3%=20 / ±5%=15 / ±10%=10 / 초과=5)
       5. 거래량 후반 증가 (>120%=20 / >110%=15 / >90%=10)
-
-    하드게이트:
-      - 주가 < SMA60 (기존 조건 유지)
-      - 주가 < SMA200 (장기 하락추세 제외 — 기존엔 없었음)
     """
     if len(df) < 125:
         return 0
@@ -301,34 +304,33 @@ def score_squeeze(df: pd.DataFrame, info: dict) -> int:
 
     if None in (close, sma20, sma60, bbw):
         return 0
-    if close < sma60:
-        return 0
 
-    # SMA200 위 조건 (데이터 있을 때만)
-    if sma200 is not None and close < sma200:
-        return 0
-
-    # BB폭 분위를 120일 기준으로 계산 (기존 60일 → 더 의미있는 응축 기준)
     w120 = df.iloc[-120:]
     w20  = df.iloc[-20:]
 
     bb_range = w120["BB_Width"].max() - w120["BB_Width"].min()
     bb_pct   = (bbw - w120["BB_Width"].min()) / (bb_range + 1e-9)
     rng      = w20["High"].max() / w20["Low"].min() - 1
-    conv     = abs(sma20 / sma60 - 1)
-    price_up = close / sma60 - 1
-    vol_mid  = w20["Volume"].iloc[:10].mean()
-    vol_late = w20["Volume"].iloc[10:].mean()
+
+    # 수렴 강도 하드게이트 — 이것이 응축의 본질
+    if bb_pct > 0.30:
+        return 0
+    if rng > 0.08:
+        return 0
+
+    conv      = abs(sma20 / sma60 - 1)
+    vol_mid   = w20["Volume"].iloc[:10].mean()
+    vol_late  = w20["Volume"].iloc[10:].mean()
     vol_ratio = vol_late / (vol_mid + 1e-9)
 
-    # SMA200 근접도: 장기 이평선이 지지선 역할할수록 매집 의미 강화
+    # SMA200 근접도: 장기 지지선에 가까울수록 매집 의미 강화
     if sma200 is not None:
         dist200 = abs(close / sma200 - 1)
         s4 = 20 if dist200 <= 0.03 else (15 if dist200 <= 0.05 else (10 if dist200 <= 0.10 else 5))
     else:
-        s4 = _pts(price_up, [(0.02, 20), (0.01, 15), (0, 10)])
+        s4 = 10  # SMA200 데이터 없으면 중간 점수
 
-    s1 = 20 if bb_pct <= 0.15 else (15 if bb_pct <= 0.20 else (10 if bb_pct <= 0.30 else 0))
+    s1 = 20 if bb_pct <= 0.15 else (15 if bb_pct <= 0.20 else 10)
     s2 = _pts(1 - rng, [(0.95, 20), (0.94, 15), (0.92, 10)])
     s3 = 20 if conv <= 0.01 else (15 if conv <= 0.02 else (10 if conv <= 0.03 else 0))
     s5 = _pts(vol_ratio, [(1.20, 20), (1.10, 15), (0.90, 10)])
@@ -375,11 +377,7 @@ def score_explosion(
     if None in (close, vol, vma20, sma60, rsi):
         return 0
 
-    # 하드게이트: 주가 < SMA60
-    if close < sma60:
-        return 0
-
-    # 하드게이트: 거래량 250% 미만
+    # 하드게이트: 거래량 250% 미만 (위치 무관, 거래량 폭발이 본질)
     vol_ratio = vol / (vma20 + 1e-9)
     if vol_ratio < 2.50:
         return 0
