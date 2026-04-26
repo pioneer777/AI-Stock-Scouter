@@ -126,8 +126,9 @@ def score_grand(df: pd.DataFrame, info: dict) -> int:
     # ── 하드게이트 2: 크로스 시점에 SMA60이 여전히 상승 중이면 반전 아님 ──
     # 장기 우상향 종목이 잠깐 눌렸다 재돌파하는 경우를 차단.
     # SMA60이 30일 전보다 3% 이상 상승 중 = 기존 상승장 연속 = 그랜드 아님.
+    sma60     = _safe(df, "SMA60")
     sma60_30d = _safe(df, "SMA60", -(cross_days + 30))
-    if sma60_30d is not None and sma60_30d > 0:
+    if sma60 is not None and sma60_30d is not None and sma60_30d > 0:
         if sma60 > sma60_30d * 1.03:
             return 0
     # ────────────────────────────────────────────────────────────────

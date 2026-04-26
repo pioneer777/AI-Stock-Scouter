@@ -191,7 +191,7 @@ def _build_sec4(trends: dict, signal_codes: set, pages_url: str, market: str,
 
         if stocks:
             linked = []
-            for s in stocks:
+            for s in stocks[:20]:  # 카테고리당 최대 20종목
                 if isinstance(s, dict):
                     s_name = s["name"]
                     s_code = s.get("code", "")
@@ -199,7 +199,8 @@ def _build_sec4(trends: dict, signal_codes: set, pages_url: str, market: str,
                     linked.append(_linked(s_name, url))
                 else:
                     linked.append(s)
-            lines.append(f"{icon} <b>{trend_name}</b>")
+            suffix = f" 외 {len(stocks)-20}개" if len(stocks) > 20 else ""
+            lines.append(f"{icon} <b>{trend_name}</b>{suffix}")
             lines.append("  " + " | ".join(linked))
             has_any = True
 
@@ -269,9 +270,25 @@ def build_message(
 # 텔레그램 전송
 # ══════════════════════════════════════════════════════════════════
 
+def _split_html_safe(text: str, max_len: int = 4000) -> list[str]:
+    """줄 단위로 분할해 HTML 태그가 중간에 잘리지 않도록 한다."""
+    if len(text) <= max_len:
+        return [text]
+    chunks, buf, buf_len = [], [], 0
+    for line in text.split("\n"):
+        line_len = len(line) + 1
+        if buf and buf_len + line_len > max_len:
+            chunks.append("\n".join(buf))
+            buf, buf_len = [], 0
+        buf.append(line)
+        buf_len += line_len
+    if buf:
+        chunks.append("\n".join(buf))
+    return chunks
+
+
 def _send_one(text: str, token: str, chat_id: str) -> bool:
-    max_len = 4000
-    chunks  = [text[i:i+max_len] for i in range(0, len(text), max_len)]
+    chunks  = _split_html_safe(text)
     url     = f"https://api.telegram.org/bot{token}/sendMessage"
     ok      = True
     for chunk in chunks:

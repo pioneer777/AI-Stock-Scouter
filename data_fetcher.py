@@ -469,7 +469,8 @@ def fetch_stock_supply_demand(code: str) -> pd.DataFrame:
 # ══════════════════════════════════════════════════════════════════
 
 DART_BASE_URL = "https://opendart.fss.or.kr/api"
-_dart_corp_codes: dict = {}   # {stock_code(6자리): corp_code(8자리)} — 프로세스 내 캐시
+_dart_corp_codes: dict = {}      # {stock_code(6자리): corp_code(8자리)} — 프로세스 내 캐시
+_dart_load_tried: bool = False   # 실패 후 재시도 방지
 
 
 def _load_dart_corp_codes() -> dict:
@@ -477,9 +478,11 @@ def _load_dart_corp_codes() -> dict:
     DART 전체 상장사 corp_code 매핑 (최초 1회 다운로드 후 메모리 캐시).
     stock_code(6자리) → corp_code(8자리) 딕셔너리 반환.
     """
-    global _dart_corp_codes
-    if _dart_corp_codes:
+    global _dart_corp_codes, _dart_load_tried
+    if _dart_corp_codes or _dart_load_tried:
         return _dart_corp_codes
+
+    _dart_load_tried = True
 
     api_key = os.environ.get("DART_API_KEY")
     if not api_key:
