@@ -145,13 +145,31 @@ _RANGE_PAD_JS = """\
         Plotly.relayout(gd, buildUpd(x0, x1)).then(function () { _busy = false; });
     }
 
-    /* 버튼 클릭 감지: rangeselector.active 이벤트로 절대 날짜 범위 적용 */
+    /* x0 날짜로 가장 가까운 버튼 구간 추정 (Plotly 내부 계산 drift 보정) */
+    function snapToBtnRange(x0) {
+        var end  = getDataEnd();
+        var days = (new Date(end).getTime() - new Date(x0).getTime()) / 86400000;
+        var idx;
+        if      (days < 120) idx = 0;   // 3M
+        else if (days < 270) idx = 1;   // 6M
+        else if (days < 548) idx = 2;   // 1Y
+        else if (days < 900) idx = 3;   // 2Y
+        else                 idx = 4;   // 전체
+        return btnRange(idx);
+    }
+
+    /* 버튼 클릭 이벤트 처리:
+       방법1: rangeselector.active (Plotly 버전에 따라 발생)
+       방법2: xaxis.range[0/1] (항상 발생) — snapToBtnRange로 drift 보정 */
     gd.on('plotly_relayout', function (ev) {
         if (_busy) return;
+        var r = null;
         if (ev.hasOwnProperty('xaxis.rangeselector.active')) {
-            var r = btnRange(ev['xaxis.rangeselector.active']);
-            applyRange(r[0], r[1]);
+            r = btnRange(ev['xaxis.rangeselector.active']);
+        } else if (ev['xaxis.range[0]'] && ev['xaxis.range[1]']) {
+            r = snapToBtnRange(ev['xaxis.range[0]']);
         }
+        if (r) applyRange(r[0], r[1]);
     });
 
     /* 초기 로드: 1Y ★ 적용 */
@@ -163,6 +181,13 @@ _RANGE_PAD_JS = """\
     });
 }());
 """
+
+
+def _hex_to_rgba(hex_color: str, alpha: float = 0.18) -> str:
+    """#RRGGBB → 'rgba(r,g,b,alpha)'"""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
 
 
 def _date_label(date_str: str) -> str:
@@ -395,7 +420,7 @@ def generate_chart(
     annotations = []
     shapes      = []
 
-    _AY_BASE = -40   # 첫 박스 (캔들에 가장 가까움)
+    _AY_BASE = -85   # 첫 박스 (캔들 고점 위 85px — 박스 높이 ~40px 고려)
     _AY_STEP = 55    # 박스 간 간격 (px)
     _ay_slots: dict = {}  # date_str → 다음 사용할 ay
 
@@ -464,9 +489,9 @@ def generate_chart(
                 showarrow=True, arrowhead=2,
                 arrowcolor=color, arrowwidth=1.5,
                 ax=0, ay=_next_ay(date_str),
-                bgcolor=color,
-                font=dict(color="#FFFFFF", size=10),
-                bordercolor=color, borderwidth=1,
+                bgcolor=_hex_to_rgba(color, 0.18),
+                font=dict(color=color, size=10),
+                bordercolor=color, borderwidth=1.5,
                 borderpad=4,
             ))
 
@@ -559,7 +584,7 @@ def generate_chart(
             orientation="h",
             y=1.10, x=0.50,
             xanchor="left", yanchor="bottom",
-            font=dict(size=10, color="#333333"),
+            font=dict(size=12, color="#333333"),
             bgcolor="rgba(255,255,255,0.9)",
             bordercolor="#DDDDDD",
             borderwidth=1,
@@ -570,7 +595,7 @@ def generate_chart(
             orientation="h",
             x=0.01, y=0.25,
             xanchor="left", yanchor="top",
-            font=dict(size=9, color="#333333"),
+            font=dict(size=11, color="#333333"),
             bgcolor="rgba(255,255,255,0.9)",
             bordercolor="#DDDDDD",
             borderwidth=1,
