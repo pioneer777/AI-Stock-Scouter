@@ -10,7 +10,8 @@ import pandas as pd
 
 log = logging.getLogger(__name__)
 
-MIN_SIGNAL_SCORE = 75
+MIN_SIGNAL_SCORE       = 75
+MIN_SQUEEZE_SCORE      = 70  # 응축은 하드게이트 2개가 이미 엄격해 임계 완화
 
 SIGNAL_META = {
     "그랜드": {"color": "#00C851", "icon": "🟢", "short": "그랜", "period": "1~3개월"},
@@ -99,9 +100,9 @@ def score_grand(df: pd.DataFrame, info: dict) -> int:
 
     vol_thr = 1.20 if is_large_cap(info) else 1.30
 
-    # 크로스 신선도
+    # 크로스 신선도 (최근 20일 이내 크로스 탐색)
     cross_days = None
-    for i in range(-5, 0):
+    for i in range(-20, 0):
         p20 = _safe(df, "SMA20", i - 1)
         p60 = _safe(df, "SMA60", i - 1)
         c20 = _safe(df, "SMA20", i)
@@ -156,9 +157,9 @@ def score_grand(df: pd.DataFrame, info: dict) -> int:
     if close / yr_high >= 0.90:
         return 0
 
-    # 그랜드 대전제: 진짜 바닥권 = SMA200(10개월 평균) 이하여야 함
-    # SMA200 위에 있으면 장기적으로 상승추세 중 = 그랜드 아님
-    if sma200 is not None and close > sma200:
+    # 그랜드 대전제: 진짜 바닥권 = SMA200(10개월 평균) ±10% 이하여야 함
+    # SMA200 10% 초과 위에 있으면 장기 상승추세 연속 = 그랜드 아님
+    if sma200 is not None and close > sma200 * 1.10:
         return 0
 
     # 단기 급등 후 이동평균 지연 반응
@@ -178,7 +179,7 @@ def score_grand(df: pd.DataFrame, info: dict) -> int:
     min_px     = w60["Close"].min()
     pull_ratio = min_px / max_px
 
-    s1 = 20 if cross_days <= 2 else (15 if cross_days <= 3 else 10)
+    s1 = 20 if cross_days <= 2 else (15 if cross_days <= 5 else (10 if cross_days <= 10 else 5))
     s2 = _pts(rsi,          [(60, 20), (55, 15), (50, 10)])
     s3 = _pts(vol / vma20,  [(1.60, 20), (1.45, 15), (vol_thr, 10)])
     s4 = _pts(close / sma120 - 1, [(0.03, 20), (0.01, 15), (0, 10)])
@@ -193,17 +194,29 @@ def score_grand(df: pd.DataFrame, info: dict) -> int:
 
 def score_golden(df: pd.DataFrame, info: dict) -> int:
     """
-    조건 (5개 × 20점):
-      1. 30일 상승폭 (>20%=20 / >15%=15 / >10%=10)
-      2. SMA20 근접도 (±3%=20 / ±5%=15 / ±7%=10)
-      3. RSI 다이버전스 우선 (주가↓RSI↑=20 / RSI40~55=15 / RSI35~60=10)
-      4. 거래량 감소 (<70%=20 / <85%=15 / <100%=10)
-      5. SMA20 > SMA60 여유 (>3%=20 / >1%=15 / just above=10)
+    골든20 (SMA20 눌림목) + 골든60 (SMA60 눌림목) 통합.
 
-    하드게이트:
-      - 현재가 > SMA20 × 1.02 (아직 눌림 시작 전)
-      - SMA20이 5일 전보다 하락 (우상향 유지 아님)
-      - SMA20/SMA60 간격이 5일 전보다 축소 (데드크로스 임박)
+    공통 하드게이트:
+      - SMA20 > SMA60 (장기 상승추세 유지 — 두 경로 모두 필수)
+      - 상승폭 15% 미만 (진짜 1차 상승 없음)  [C안]
+      - 고점 대비 3% 미만 하락 (아직 눌림 아님)
+
+    골든20 (SMA20 눌림):
+      - close ≈ SMA20 (대형주 ±7% / 중소형주 ±12%)
+      - SMA20이 5일 전보다 하락 → 차단
+      - SMA20/SMA60 간격 축소 → 차단
+
+    골든60 (SMA60 눌림):  [A+B안]
+      - close ≈ SMA60 ±8% (SMA20 하락 허용, SMA60 우상향 필수)
+      - SMA60이 10일 전보다 하락 → 차단
+      - SMA20 하락 게이트 면제 (더 깊은 조정 허용)
+
+    점수 (5개 × 20점):
+      s1: 상승폭 (>20%=20 / ≥15%=15)
+      s2: 눌림 이평선 근접도 (±3%=20 / ±5%=15 / ±thr=10)
+      s3: RSI 불리시 다이버전스 또는 스윗스팟
+      s4: 눌림 중 거래량 감소
+      s5: 골든20→SMA20/SMA60 간격 / 골든60→SMA60/SMA120 간격
     """
     if len(df) < 35:
         return 0
@@ -214,61 +227,85 @@ def score_golden(df: pd.DataFrame, info: dict) -> int:
     close = _safe(df, "Close")
     sma20 = _safe(df, "SMA20")
     sma60 = _safe(df, "SMA60")
+    sma120 = _safe(df, "SMA120")
 
     if None in (rsi, vol, vma20, close, sma20, sma60):
         return 0
+
+    # 공통: SMA20 > SMA60 (데드크로스 이후 골든 없음)
     if sma20 <= sma60:
         return 0
 
-    w30  = df.iloc[-30:]
-    rise = w30["Close"].max() / w30["Close"].iloc[0] - 1
-    if rise < 0.10:
+    # ── 어느 눌림 경로인지 판단 ──────────────────────────────────
+    pull_thr  = 0.07 if is_large_cap(info) else 0.12
+    near_sma20 = abs(close / sma20 - 1) <= pull_thr
+    near_sma60 = abs(close / sma60 - 1) <= 0.08
+
+    if not near_sma20 and not near_sma60:
+        return 0  # 어느 이평선도 근접하지 않음
+
+    # SMA20 눌림 우선 (두 조건 동시 충족 시)
+    use_sma60 = near_sma60 and not near_sma20
+    ref_sma   = sma60 if use_sma60 else sma20
+    w_days    = 60    if use_sma60 else 30
+    w         = df.iloc[-w_days:]
+
+    # 1차 상승 확인 (C안: 15%로 강화)
+    rise = w["Close"].max() / w["Close"].iloc[0] - 1
+    if rise < 0.15:
         return 0
 
-    # 골든 대전제: 상승 후 실제로 눌린 것 = 30일 고점에서 3% 이상 하락 확인
-    # 고점 바로 아래에서 발생하면 아직 눌림이 아님
-    peak_30 = w30["High"].max()
-    if close >= peak_30 * 0.97:
+    # 눌림 확인: 고점 대비 3% 이상 하락
+    peak = w["High"].max()
+    if close >= peak * 0.97:
         return 0
 
-    pull_dist = abs(close / sma20 - 1)
-    if pull_dist > 0.07:
+    # 기준 이평선보다 2% 이상 위 = 아직 눌림 시작 안 됨
+    if close > ref_sma * 1.02:
         return 0
 
-    # ── 하드게이트 ──────────────────────────────────────────────
-    # 주가가 SMA20보다 2% 이상 위 = 아직 눌림 시작 안 됨
-    if close > sma20 * 1.02:
-        return 0
-
-    sma20_5d = _safe(df, "SMA20", -5)
-    sma60_5d = _safe(df, "SMA60", -5)
-
-    # SMA20 꺾임 감지
-    if sma20_5d is not None and sma20 <= sma20_5d:
-        return 0
-
-    # SMA20/SMA60 간격 축소 = 데드크로스 임박
-    if sma20_5d is not None and sma60_5d is not None and sma60_5d > 0:
-        gap_now  = sma20 / sma60 - 1
-        gap_prev = sma20_5d / sma60_5d - 1
-        if gap_now < gap_prev:
+    # ── 경로별 전용 게이트 ─────────────────────────────────────
+    if use_sma60:
+        # 골든60: SMA60 자체가 우상향이어야 (SMA20 게이트 면제)
+        sma60_10d = _safe(df, "SMA60", -10)
+        if sma60_10d is not None and sma60 <= sma60_10d:
             return 0
+    else:
+        # 골든20: SMA20 우상향 + SMA20/SMA60 간격 유지
+        sma20_5d = _safe(df, "SMA20", -5)
+        sma60_5d = _safe(df, "SMA60", -5)
+        if sma20_5d is not None and sma20 <= sma20_5d:
+            return 0
+        if sma20_5d is not None and sma60_5d is not None and sma60_5d > 0:
+            if sma20 / sma60 - 1 < sma20_5d / sma60_5d - 1:
+                return 0
     # ────────────────────────────────────────────────────────────
 
-    # RSI 불리시 다이버전스: 5일간 주가 하락 중 RSI는 상승 → 매도세 소진 신호
+    pull_dist = abs(close / ref_sma - 1)
+
+    # RSI 불리시 다이버전스
     rsi_5d   = _safe(df, "RSI",   -5)
     close_5d = _safe(df, "Close", -5)
     bullish_div = (
         rsi_5d is not None and close_5d is not None and close_5d > 0
-        and close <= close_5d   # 주가 하락 또는 보합
-        and rsi > rsi_5d        # RSI 상승 (매도 압력 약화)
+        and close <= close_5d
+        and rsi > rsi_5d
     )
 
-    s1 = _pts(rise, [(0.20, 20), (0.15, 15), (0.10, 10)])
+    s1 = _pts(rise, [(0.20, 20), (0.15, 15)])
     s2 = 20 if pull_dist <= 0.03 else (15 if pull_dist <= 0.05 else 10)
     s3 = 20 if bullish_div else (15 if 40 <= rsi <= 55 else (10 if 35 <= rsi <= 60 else 0))
     s4 = _pts(1 - vol / vma20, [(0.30, 20), (0.15, 15), (0, 10)])
-    s5 = _pts(sma20 / sma60 - 1, [(0.03, 20), (0.01, 15), (0, 10)])
+
+    if use_sma60:
+        # 골든60: SMA60 > SMA120 (중기 추세 건강도)
+        if sma120 is not None and sma120 > 0:
+            s5 = _pts(sma60 / sma120 - 1, [(0.03, 20), (0.01, 15), (0, 10)])
+        else:
+            s5 = 10
+    else:
+        # 골든20: SMA20 > SMA60 간격
+        s5 = _pts(sma20 / sma60 - 1, [(0.03, 20), (0.01, 15), (0, 10)])
 
     return s1 + s2 + s3 + s4 + s5
 
@@ -313,9 +350,11 @@ def score_squeeze(df: pd.DataFrame, info: dict) -> int:
     rng      = w20["High"].max() / w20["Low"].min() - 1
 
     # 수렴 강도 하드게이트 — 이것이 응축의 본질
+    # 대형주는 변동성이 낮으니 기준 좁게, 중소형주는 넓게
+    rng_thr = 0.08 if is_large_cap(info) else 0.15
     if bb_pct > 0.30:
         return 0
-    if rng > 0.08:
+    if rng > rng_thr:
         return 0
 
     conv      = abs(sma20 / sma60 - 1)
@@ -377,9 +416,10 @@ def score_explosion(
     if None in (close, vol, vma20, sma60, rsi):
         return 0
 
-    # 하드게이트: 거래량 250% 미만 (위치 무관, 거래량 폭발이 본질)
+    # 하드게이트: 거래량 미달 (대형주 250%, 중소형주 200%)
     vol_ratio = vol / (vma20 + 1e-9)
-    if vol_ratio < 2.50:
+    vol_thr   = 2.50 if is_large_cap(info) else 2.00
+    if vol_ratio < vol_thr:
         return 0
 
     # 응축 기간 계산: 어제부터 거슬러 올라가며 가격 범위 8% 이내인 일수
@@ -394,7 +434,7 @@ def score_explosion(
         l = float(df["Low"].iloc[-offset])
         new_high = max(w_high, h)
         new_low  = min(w_low, l)
-        if new_high / new_low - 1 > 0.08:
+        if new_high / new_low - 1 > 0.10:
             break
         w_high = new_high
         w_low  = new_low
@@ -466,7 +506,8 @@ def run_signal_detection(
             continue
         try:
             s = func(*args)
-            if s >= MIN_SIGNAL_SCORE:
+            threshold = MIN_SQUEEZE_SCORE if name == "응축" else MIN_SIGNAL_SCORE
+            if s >= threshold:
                 detected.append({"name": name, "score": s})
                 log.debug(f"{name} 시그널 발생 (점수: {s})")
         except Exception as e:
