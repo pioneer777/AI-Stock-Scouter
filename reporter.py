@@ -29,6 +29,13 @@ TREND_ICONS = {
     "하락주의":   "🔻",
 }
 
+TREND_DESC = {
+    "상승지속":   "SMA20·60 위 + 20일 3%↑ (모멘텀 유지)",
+    "건강한조정": "SMA60 위 + SMA20 아래 (단기 눌림, 관심)",
+    "횡보중":     "SMA200 위 + 20일 ±5% 이내 (방향 대기)",
+    "하락주의":   "SMA60 아래 또는 하락세 (신중 접근)",
+}
+
 SIGNAL_COLORS = {
     "그랜드": "#00C851",
     "골든":   "#FFB300",
@@ -200,7 +207,8 @@ def _build_sec4(trends: dict, signal_codes: set, pages_url: str, market: str,
                 else:
                     linked.append(s)
             suffix = f" 외 {len(stocks)-20}개" if len(stocks) > 20 else ""
-            lines.append(f"{icon} <b>{trend_name}</b>{suffix}")
+            desc = TREND_DESC.get(trend_name, "")
+            lines.append(f"{icon} <b>{trend_name}</b>{suffix}  <i>← {desc}</i>")
             lines.append("  " + " | ".join(linked))
             has_any = True
 
