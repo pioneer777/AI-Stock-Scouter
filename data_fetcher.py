@@ -188,19 +188,20 @@ def fetch_market_index_pykrx(market: str, period: str = "1y") -> pd.DataFrame | 
 
 def fetch_supply_demand_pykrx(stock_list: dict) -> dict:
     """
-    pykrx: 관심종목 기관/외인 당일 순매수 TOP3 (KIS fallback용).
+    pykrx: 관심종목 기관/외인 최근 거래일 순매수 TOP3 (KIS fallback용).
+    5일 창으로 조회 후 마지막 행 사용 (장중엔 당일 데이터 없어 전일 기준).
     반환: {"기관": [...], "외인": [...]}
     """
     if not _PYKRX_OK:
         return {"기관": [], "외인": []}
     result  = {"기관": [], "외인": []}
-    today   = date.today().strftime("%Y%m%d")
+    from_dt, to_dt = _period_to_dates("5d")
     records = []
     for code, meta in stock_list.items():
         clean = _clean_code(code)
         name  = meta.get("종목명", code)
         try:
-            df = krx_stock.get_market_trading_value_by_date(today, today, clean)
+            df = krx_stock.get_market_trading_value_by_date(from_dt, to_dt, clean)
             if df is None or df.empty:
                 continue
             row = df.iloc[-1]

@@ -232,15 +232,15 @@ def score_golden(df: pd.DataFrame, info: dict) -> tuple[int, str]:
     if sma200_60d is None or sma200 <= sma200_60d:
         return 0, ""
 
-    # 하드게이트 2: 이평선 수렴 ≤ 20%
+    # 하드게이트 2: 이평선 수렴 ≤ 12% (SMA20~SMA120 최대-최소 / 최소)
     ma_max = max(sma20, sma60, sma120)
     ma_min = min(sma20, sma60, sma120)
     ma_gap = (ma_max - ma_min) / ma_min
-    if ma_gap > 0.20:
+    if ma_gap > 0.12:
         return 0, ""
 
-    # 하드게이트 3: 주가가 SMA60/SMA120/SMA200 중 하나에 -12%~+5% 이내
-    def in_range(ref): return -0.12 <= close / ref - 1 <= 0.05
+    # 하드게이트 3: 주가가 SMA60/SMA120/SMA200 중 하나에 -12%~+3% 이내
+    def in_range(ref): return -0.12 <= close / ref - 1 <= 0.03
     if not (in_range(sma60) or in_range(sma120) or in_range(sma200)):
         return 0, ""
 
@@ -251,7 +251,7 @@ def score_golden(df: pd.DataFrame, info: dict) -> tuple[int, str]:
     # 점수 계산
     sma200_slope = sma200 / sma200_60d - 1
     s1 = _pts(sma200_slope, [(0.05, 20), (0.03, 15), (0.01, 10)])
-    s2 = 20 if ma_gap <= 0.07 else (15 if ma_gap <= 0.13 else 10)
+    s2 = 20 if ma_gap <= 0.04 else (15 if ma_gap <= 0.08 else 10)
 
     dist60  = abs(close / sma60  - 1)
     dist120 = abs(close / sma120 - 1)
