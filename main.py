@@ -277,7 +277,7 @@ def run(market: str, report_mode: str) -> None:
         if market == "KR":
             try:
                 from data_fetcher import fetch_stock_supply_demand
-                supply_df = fetch_stock_supply_demand(code)
+                supply_df = fetch_stock_supply_demand(code, market_name=meta.get("시장", ""))
             except Exception:
                 pass
 

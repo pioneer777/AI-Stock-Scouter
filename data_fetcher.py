@@ -281,7 +281,19 @@ def _kis_headers(token: str, tr_id: str) -> dict:
     }
 
 
-def fetch_stock_supply_demand_kis(code: str) -> pd.DataFrame:
+def _kis_market_code(code: str, market_name: str = "") -> str:
+    """KOSPI → J, KOSDAQ → Q (KIS API FID_COND_MRKT_DIV_CODE)."""
+    if "KOSDAQ" in market_name.upper() or code.endswith(".KQ"):
+        return "Q"
+    return "J"
+
+
+def _clean_code(code: str) -> str:
+    """종목코드에서 .KS / .KQ suffix 제거."""
+    return code.split(".")[0]
+
+
+def fetch_stock_supply_demand_kis(code: str, market_name: str = "") -> pd.DataFrame:
     """
     KIS API: 특정 종목 기관/외인 일별 순매수 시계열 (차트 2단용).
     반환: DataFrame (index=datetime, columns=[기관, 외인])  단위: 백만원
@@ -290,13 +302,16 @@ def fetch_stock_supply_demand_kis(code: str) -> pd.DataFrame:
     if not token:
         return pd.DataFrame()
 
+    clean = _clean_code(code)
+    mkt   = _kis_market_code(code, market_name)
+
     try:
         resp = requests.get(
             f"{KIS_BASE_URL}/uapi/domestic-stock/v1/trading/inquire-investor",
             headers=_kis_headers(token, "FHKST01010300"),
             params={
-                "FID_COND_MRKT_DIV_CODE": "J",
-                "FID_INPUT_ISCD":         code,
+                "FID_COND_MRKT_DIV_CODE": mkt,
+                "FID_INPUT_ISCD":         clean,
             },
             timeout=10,
         )
@@ -338,14 +353,16 @@ def fetch_supply_demand_kis(stock_list: dict) -> dict:
 
     records = []
     for code, meta in stock_list.items():
-        name = meta.get("종목명", code)
+        name   = meta.get("종목명", code)
+        clean  = _clean_code(code)
+        mkt    = _kis_market_code(code, meta.get("시장", ""))
         try:
             resp = requests.get(
                 f"{KIS_BASE_URL}/uapi/domestic-stock/v1/trading/inquire-investor",
                 headers=_kis_headers(token, "FHKST01010300"),
                 params={
-                    "FID_COND_MRKT_DIV_CODE": "J",
-                    "FID_INPUT_ISCD":         code,
+                    "FID_COND_MRKT_DIV_CODE": mkt,
+                    "FID_INPUT_ISCD":         clean,
                 },
                 timeout=10,
             )
@@ -438,13 +455,13 @@ def fetch_supply_demand() -> dict:
     return result
 
 
-def fetch_stock_supply_demand(code: str) -> pd.DataFrame:
+def fetch_stock_supply_demand(code: str, market_name: str = "") -> pd.DataFrame:
     """
     특정 종목 기관/외인 일별 순매수 시계열 (차트 2단용).
     KIS API 우선, 실패 시 Naver fallback.
     반환: DataFrame (index=datetime, columns=[기관, 외인])
     """
-    df = fetch_stock_supply_demand_kis(code)
+    df = fetch_stock_supply_demand_kis(code, market_name=market_name)
     if not df.empty:
         return df
 
