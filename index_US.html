@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Stock Scouter — US</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0E0E0E; color: #E0E0E0;
+      font-family: 'Segoe UI', sans-serif;
+      padding: 20px;
+    }
+    h1 { font-size: 1.4rem; margin-bottom: 4px; }
+    .sub { color: #888; font-size: 0.85rem; margin-bottom: 20px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 14px;
+    }
+    .card {
+      background: #1A1A1A; border: 1px solid #333;
+      border-radius: 10px; padding: 16px;
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .badge {
+      display: inline-block; border-radius: 5px;
+      padding: 3px 10px; font-size: 0.8rem;
+      font-weight: bold; color: #fff;
+      width: fit-content;
+    }
+    .name { font-size: 1.05rem; font-weight: bold; }
+    .code { color: #888; font-size: 0.8rem; }
+    .info { font-size: 0.85rem; color: #bbb; }
+    .btn {
+      margin-top: 8px; padding: 7px 0;
+      background: #2196F3; color: #fff;
+      border-radius: 6px; text-align: center;
+      text-decoration: none; font-size: 0.85rem;
+      font-weight: bold;
+    }
+    .btn:hover { background: #1565C0; }
+  </style>
+</head>
+<body>
+  <h1>📊 AI Stock Scouter — US 시장</h1>
+  <p class="sub">마지막 업데이트: 2026-04-27 21:47 | 유효기간 내 시그널 보유 종목</p>
+  <div class="grid">
+
+        <div class="card">
+          <div class="badge" style="background:#FFB300">골든 🟡</div>
+          <div class="name">애플</div>
+          <div class="code">AAPL</div>
+          <div class="info">선정일: 2026-04-27</div>
+          <div class="info">진입가: 268</div>
+          <a class="btn" href="charts/US/AAPL_애플.html" target="_blank">📊 차트 보기</a>
+        </div>
+
+        <div class="card">
+          <div class="badge" style="background:#FFB300">골든 🟡</div>
+          <div class="name">에머슨 일렉트릭</div>
+          <div class="code">EMR</div>
+          <div class="info">선정일: 2026-04-27</div>
+          <div class="info">진입가: 141</div>
+          <a class="btn" href="charts/US/EMR_에머슨 일렉트릭.html" target="_blank">📊 차트 보기</a>
+        </div>
+
+        <div class="card">
+          <div class="badge" style="background:#FFB300">골든 🟡</div>
+          <div class="name">뉴트리엔</div>
+          <div class="code">NTR</div>
+          <div class="info">선정일: 2026-04-27</div>
+          <div class="info">진입가: 72</div>
+          <a class="btn" href="charts/US/NTR_뉴트리엔.html" target="_blank">📊 차트 보기</a>
+        </div>
+
+        <div class="card">
+          <div class="badge" style="background:#FFB300">골든 🟡</div>
+          <div class="name">알파 메탈러지컬 리소스</div>
+          <div class="code">AMR</div>
+          <div class="info">선정일: 2026-04-27</div>
+          <div class="info">진입가: 195</div>
+          <a class="btn" href="charts/US/AMR_알파 메탈러지컬 리소스.html" target="_blank">📊 차트 보기</a>
+        </div>
+  </div>
+</body>
+</html>
