@@ -2,15 +2,23 @@ name: 🇺🇸 US 자동 실행
 
 on:
   schedule:
-    # ※ GitHub Actions는 UTC 기준. KST = UTC+9
-    - cron: "0 15 * * 1-5"   # KST 00:00 (장중 SUMMARY)
-    - cron: "0 19 * * 1-5"   # KST 04:00 (장중 SUMMARY)
-    - cron: "0 22 * * 1-5"   # KST 07:00 (장마감 FULL)
+    # ※ GitHub Actions는 UTC 기준
+    # 미국 장: 09:30~16:00 EST(UTC-5) / EDT(UTC-4, 서머타임)
+    #
+    # [서머타임 EDT, UTC-4] 3월 둘째 일 ~ 11월 첫째 일
+    - cron: "30 11 * * 1-5"  # 07:30 EDT 장전 2H  (KST 20:30)
+    - cron: "45 16 * * 1-5"  # 12:45 EDT 장 중간  (KST 01:45)
+    - cron: "0 21 * * 1-5"   # 17:00 EDT 장 종료 후 1H (KST 06:00) — 기록
+    #
+    # [표준시 EST, UTC-5] 11월 첫째 일 ~ 3월 둘째 일
+    - cron: "30 12 * * 1-5"  # 07:30 EST 장전 2H  (KST 21:30)
+    - cron: "45 17 * * 1-5"  # 12:45 EST 장 중간  (KST 02:45)
+    - cron: "0 22 * * 1-5"   # 17:00 EST 장 종료 후 1H (KST 07:00) — 기록
 
   workflow_dispatch:
 
 permissions:
-  contents: write   # signal_history 자동 커밋용
+  contents: write
 
 jobs:
   run-us:
@@ -28,40 +36,46 @@ jobs:
       - name: 📦 의존성 설치
         run: pip install -r requirements.txt
 
-      - name: ▶️ US SUMMARY (00:00 / 04:00 KST)
+      - name: ▶️ US 장전/장중 — 기록 없음
         if: |
           github.event_name == 'schedule' &&
-          (github.event.schedule == '0 15 * * 1-5' ||
-           github.event.schedule == '0 19 * * 1-5')
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:   ${{ secrets.CHAT_ID_US }}
-        run: python main.py --market US --report SUMMARY
-
-      - name: ▶️ US FULL (07:00 KST)
-        if: |
-          github.event_name == 'schedule' &&
-          github.event.schedule == '0 22 * * 1-5'
+          (github.event.schedule == '30 11 * * 1-5' ||
+           github.event.schedule == '45 16 * * 1-5' ||
+           github.event.schedule == '30 12 * * 1-5' ||
+           github.event.schedule == '45 17 * * 1-5')
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.CHAT_ID_US }}
           PAGES_URL:          ${{ secrets.PAGES_URL }}
         run: python main.py --market US --report FULL
 
-      - name: 🔧 수동 실행 (FULL 기본)
+      - name: ▶️ US 장 종료 후 — 기록 O (EDT 17:00 / EST 17:00)
+        if: |
+          github.event_name == 'schedule' &&
+          (github.event.schedule == '0 21 * * 1-5' ||
+           github.event.schedule == '0 22 * * 1-5')
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.CHAT_ID_US }}
+          PAGES_URL:          ${{ secrets.PAGES_URL }}
+          RECORD_SIGNALS:     "true"
+        run: python main.py --market US --report FULL
+
+      - name: 🔧 수동 실행 (기록 O)
         if: github.event_name == 'workflow_dispatch'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.CHAT_ID_US }}
           PAGES_URL:          ${{ secrets.PAGES_URL }}
+          RECORD_SIGNALS:     "true"
         run: python main.py --market US --report FULL
 
-      # FULL 실행 후에만 signal_history + index HTML 커밋
-      - name: 💾 기록 커밋 (FULL 전용)
+      - name: 💾 기록 커밋 (장 종료 후 + 수동)
         if: |
           github.event_name == 'workflow_dispatch' ||
           (github.event_name == 'schedule' &&
-           github.event.schedule == '0 22 * * 1-5')
+           (github.event.schedule == '0 21 * * 1-5' ||
+            github.event.schedule == '0 22 * * 1-5'))
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

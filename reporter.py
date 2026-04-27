@@ -95,15 +95,18 @@ def _build_sec1(new_signals: list[dict], header: str, pages_url: str, market: st
             url  = _chart_link(pages_url, market, item["code"], item["name"])
             for sig in item["signals"]:
                 sig_name = sig["name"] if isinstance(sig, dict) else sig
+                display  = sig.get("display", "") if isinstance(sig, dict) else ""
                 score    = sig.get("score", 0) if isinstance(sig, dict) else 0
-                label    = f"{_linked(item['name'], url)} ★{score}{warn}"
+                info_str = display if display else f"★{score}"
+                label    = f"{_linked(item['name'], url)}{warn}  <i>{info_str}</i>"
                 by_type.setdefault(sig_name, []).append(label)
 
         for sig_name, icon in SIGNAL_ICONS.items():
             names = by_type.get(sig_name, [])
             if names:
                 pad = " " * max(0, 4 - len(sig_name))
-                lines.append(f"[{sig_name}{icon}]{pad}  {'  |  '.join(names)}")
+                for label in names:
+                    lines.append(f"[{sig_name}{icon}]{pad}  {label}")
 
     lines.append("")
     lines.append("  <i>그랜드🟢 1~3개월 | 골든🟡 2~4주 | 응축🟣 1~6개월 | 폭발🔴 1~2주</i>")

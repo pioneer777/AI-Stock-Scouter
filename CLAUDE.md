@@ -445,11 +445,15 @@ MACD, 시그널선, RSI (라인 아이콘)
 
 ### 운영 스케줄 (KST 기준)
 ```
-KR 장중:  11:00, 14:30 → SUMMARY
-KR 장마감: 17:00       → FULL
-US 장중:  00:00, 04:00 → SUMMARY
-US 장마감: 07:00       → FULL
+KR 장전 2H:  07:00      → FULL (기록X, 전일 종가 기준)
+KR 장 중간:  12:15      → FULL (기록X, 실시간 기준)
+KR 장 종료:  16:30      → FULL (기록O, 당일 종가 기준) RECORD_SIGNALS=true
+
+US 장전 2H:  20:30(EDT) / 21:30(EST) → FULL (기록X)
+US 장 중간:  01:45(EDT) / 02:45(EST) → FULL (기록X)
+US 장 종료:  06:00(EDT) / 07:00(EST) → FULL (기록O) RECORD_SIGNALS=true
 ```
+> RECORD_SIGNALS=true 인 실행만 signal_history 저장 + index HTML 생성.
 
 ### 인덱스 파일 분리
 ```

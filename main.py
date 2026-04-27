@@ -179,8 +179,9 @@ def run(market: str, report_mode: str) -> None:
     now_dt   = datetime.now()
     day_kr   = ["월", "화", "수", "목", "금", "토", "일"][now_dt.weekday()]
     now_str  = now_dt.strftime(f"%m.%d({day_kr}) %H:%M")
-    is_full  = report_mode == "FULL"
-    dry_run  = os.environ.get("DRY_RUN", "false").lower() == "true"
+    is_full       = report_mode == "FULL"
+    should_record = os.environ.get("RECORD_SIGNALS", "false").lower() == "true"
+    dry_run       = os.environ.get("DRY_RUN", "false").lower() == "true"
 
     log.info("=" * 55)
     log.info(f"AI Stock Scouter | 시장: {market} | 모드: {report_mode}")
@@ -258,8 +259,8 @@ def run(market: str, report_mode: str) -> None:
             })
             signal_codes_today.add(code)
 
-            # FULL 모드에서만 히스토리 기록
-            if is_full:
+            # 장 종료 후 실행(RECORD_SIGNALS=true)에서만 히스토리 기록
+            if should_record:
                 signal_names = [s["name"] for s in signals]
                 signal_history = record_signals(
                     signal_history, code, name, signal_names, current_price, today
@@ -337,8 +338,8 @@ def run(market: str, report_mode: str) -> None:
 
     send_telegram(messages, dry_run=dry_run)
 
-    # ── FULL 전용: 히스토리 저장 + index HTML 생성 ────────────────
-    if is_full:
+    # ── 장 종료 후 전용: 히스토리 저장 + index HTML 생성 ─────────
+    if should_record:
         save_json(BASE_DIR / f"signal_history_{market}.json", signal_history)
 
         generate_index_html(

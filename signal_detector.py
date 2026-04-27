@@ -79,7 +79,7 @@ def _market_regime(market_index_df: "pd.DataFrame | None") -> str:
 # 시그널 1: 그랜드
 # ══════════════════════════════════════════════════════════════════
 
-def score_grand(df: pd.DataFrame, info: dict) -> int:
+def score_grand(df: pd.DataFrame, info: dict) -> tuple[int, str]:
     """
     조건 (5개 × 20점):
       1. SMA20 > SMA60 크로스 신선도 (최근 2일=20 / 3일=15 / 5일=10)
@@ -94,9 +94,11 @@ def score_grand(df: pd.DataFrame, info: dict) -> int:
       - RSI ≥ 70 (과매수)
       - 20일 상승률 ≥ 40% (단기 급등 후 지연 반응)
       - SMA120이 60일 전 대비 5% 이상 하락 (하락추세 SMA120)
+
+    표시: "크로스 3일전 | SMA120 +2.1% / SMA200 -8.3% | RSI 58"
     """
     if len(df) < 65:
-        return 0
+        return 0, ""
 
     vol_thr = 1.20 if is_large_cap(info) else 1.30
 
@@ -113,7 +115,7 @@ def score_grand(df: pd.DataFrame, info: dict) -> int:
             cross_days = abs(i)
             break
     if cross_days is None:
-        return 0
+        return 0, ""
 
     # ── 하드게이트 1: 크로스 전 하락/횡보 확인 ──────────────────────
     _pre_end   = -(cross_days + 1)
@@ -122,16 +124,14 @@ def score_grand(df: pd.DataFrame, info: dict) -> int:
     if len(pre_cross) >= 30:
         days_below = (pre_cross["SMA20"] < pre_cross["SMA60"]).sum()
         if days_below < 20:
-            return 0
+            return 0, ""
 
     # ── 하드게이트 2: 크로스 시점에 SMA60이 여전히 상승 중이면 반전 아님 ──
-    # 장기 우상향 종목이 잠깐 눌렸다 재돌파하는 경우를 차단.
-    # SMA60이 30일 전보다 3% 이상 상승 중 = 기존 상승장 연속 = 그랜드 아님.
     sma60     = _safe(df, "SMA60")
     sma60_30d = _safe(df, "SMA60", -(cross_days + 30))
     if sma60 is not None and sma60_30d is not None and sma60_30d > 0:
         if sma60 > sma60_30d * 1.03:
-            return 0
+            return 0, ""
     # ────────────────────────────────────────────────────────────────
 
     rsi    = _safe(df, "RSI")
@@ -142,36 +142,30 @@ def score_grand(df: pd.DataFrame, info: dict) -> int:
     sma200 = _safe(df, "SMA200")
 
     if None in (rsi, vol, vma20, close, sma120):
-        return 0
+        return 0, ""
     if close <= sma120:
-        return 0
+        return 0, ""
 
     # ── 하드게이트 ──────────────────────────────────────────────
-    # RSI 과매수
     if rsi >= 70:
-        return 0
+        return 0, ""
 
-    # 52주 고점 근처 (이미 많이 오른 종목)
     lookback  = min(252, len(df))
     yr_high   = df.iloc[-lookback:]["High"].max()
     if close / yr_high >= 0.90:
-        return 0
+        return 0, ""
 
-    # 그랜드 대전제: 진짜 바닥권 = SMA200(10개월 평균) ±10% 이하여야 함
-    # SMA200 10% 초과 위에 있으면 장기 상승추세 연속 = 그랜드 아님
     if sma200 is not None and close > sma200 * 1.10:
-        return 0
+        return 0, ""
 
-    # 단기 급등 후 이동평균 지연 반응
     if len(df) >= 20:
         close_20d = df["Close"].iloc[-20]
         if close_20d > 0 and close / close_20d - 1 >= 0.40:
-            return 0
+            return 0, ""
 
-    # SMA120 하락추세 (60일 전 대비 5% 이상 하락)
     sma120_60d = _safe(df, "SMA120", -60)
     if sma120_60d is not None and sma120 < sma120_60d * 0.95:
-        return 0
+        return 0, ""
     # ────────────────────────────────────────────────────────────
 
     w60        = df.iloc[-60:]
@@ -185,129 +179,104 @@ def score_grand(df: pd.DataFrame, info: dict) -> int:
     s4 = _pts(close / sma120 - 1, [(0.03, 20), (0.01, 15), (0, 10)])
     s5 = 20 if pull_ratio <= 0.80 else (15 if pull_ratio <= 0.85 else 10)
 
-    return s1 + s2 + s3 + s4 + s5
+    score = s1 + s2 + s3 + s4 + s5
+
+    sma120_pct = (close / sma120 - 1) * 100
+    sma200_pct = (close / sma200 - 1) * 100 if sma200 else None
+    sma200_str = f" / SMA200 {sma200_pct:+.1f}%" if sma200_pct is not None else ""
+    display = f"크로스 {cross_days}일전 | SMA120 {sma120_pct:+.1f}%{sma200_str} | RSI {rsi:.0f}"
+
+    return score, display
 
 
 # ══════════════════════════════════════════════════════════════════
-# 시그널 2: 골든
+# 시그널 2: 골든MA
 # ══════════════════════════════════════════════════════════════════
 
-def score_golden(df: pd.DataFrame, info: dict) -> int:
+def score_golden(df: pd.DataFrame, info: dict) -> tuple[int, str]:
     """
-    골든20 (SMA20 눌림목) + 골든60 (SMA60 눌림목) 통합.
+    골든MA — SMA200 우상향 + 다중 이평선 수렴 + 주가 근접
 
-    공통 하드게이트:
-      - SMA20 > SMA60 (장기 상승추세 유지 — 두 경로 모두 필수)
-      - 상승폭 15% 미만 (진짜 1차 상승 없음)  [C안]
-      - 고점 대비 3% 미만 하락 (아직 눌림 아님)
-
-    골든20 (SMA20 눌림):
-      - close ≈ SMA20 (대형주 ±7% / 중소형주 ±12%)
-      - SMA20이 5일 전보다 하락 → 차단
-      - SMA20/SMA60 간격 축소 → 차단
-
-    골든60 (SMA60 눌림):  [A+B안]
-      - close ≈ SMA60 ±8% (SMA20 하락 허용, SMA60 우상향 필수)
-      - SMA60이 10일 전보다 하락 → 차단
-      - SMA20 하락 게이트 면제 (더 깊은 조정 허용)
+    하드게이트:
+      - SMA200이 60일 전보다 낮음 (하락추세 SMA200)
+      - SMA20~SMA120 간격 > 20% (수렴 아님)
+      - 주가가 SMA60/SMA120/SMA200 중 어느 것에도 -12%~+3% 이내 아님
+      - RSI ≥ 70 (과매수)
 
     점수 (5개 × 20점):
-      s1: 상승폭 (>20%=20 / ≥15%=15)
-      s2: 눌림 이평선 근접도 (±3%=20 / ±5%=15 / ±thr=10)
-      s3: RSI 불리시 다이버전스 또는 스윗스팟
-      s4: 눌림 중 거래량 감소
-      s5: 골든20→SMA20/SMA60 간격 / 골든60→SMA60/SMA120 간격
+      s1: SMA200 우상향 강도 (60일 기울기 >5%=20 / >3%=15 / >1%=10)
+      s2: 이평선 수렴도 (gap ≤7%=20 / ≤13%=15 / ≤20%=10)
+      s3: 주가~가장 가까운 이평선 거리 (≤3%=20 / ≤6%=15 / ≤12%=10)
+      s4: RSI 중립권 (40~60=20 / 35~65=15 / 30~70=10)
+      s5: 거래량 감소 (vol<70%=20 / <85%=15 / <100%=10)
+
+    표시: "SMA200 우상향 | SMA20 -5.2% / SMA60 -1.8% / SMA120 +4.3%"
     """
-    if len(df) < 35:
-        return 0
+    if len(df) < 200:
+        return 0, ""
 
-    rsi   = _safe(df, "RSI")
-    vol   = _safe(df, "Volume")
-    vma20 = _safe(df, "Volume_MA20")
-    close = _safe(df, "Close")
-    sma20 = _safe(df, "SMA20")
-    sma60 = _safe(df, "SMA60")
+    close  = _safe(df, "Close")
+    sma20  = _safe(df, "SMA20")
+    sma60  = _safe(df, "SMA60")
     sma120 = _safe(df, "SMA120")
+    sma200 = _safe(df, "SMA200")
+    rsi    = _safe(df, "RSI")
+    vol    = _safe(df, "Volume")
+    vma20  = _safe(df, "Volume_MA20")
 
-    if None in (rsi, vol, vma20, close, sma20, sma60):
-        return 0
+    if None in (close, sma20, sma60, sma120, sma200, rsi):
+        return 0, ""
 
-    # 공통: SMA20 > SMA60 (데드크로스 이후 골든 없음)
-    if sma20 <= sma60:
-        return 0
+    # 하드게이트 1: SMA200 우상향
+    sma200_60d = _safe(df, "SMA200", -60)
+    if sma200_60d is None or sma200 <= sma200_60d:
+        return 0, ""
 
-    # ── 어느 눌림 경로인지 판단 ──────────────────────────────────
-    pull_thr  = 0.07 if is_large_cap(info) else 0.12
-    near_sma20 = abs(close / sma20 - 1) <= pull_thr
-    near_sma60 = abs(close / sma60 - 1) <= 0.08
+    # 하드게이트 2: 이평선 수렴 ≤ 20%
+    ma_max = max(sma20, sma60, sma120)
+    ma_min = min(sma20, sma60, sma120)
+    ma_gap = (ma_max - ma_min) / ma_min
+    if ma_gap > 0.20:
+        return 0, ""
 
-    if not near_sma20 and not near_sma60:
-        return 0  # 어느 이평선도 근접하지 않음
+    # 하드게이트 3: 주가가 SMA60/SMA120/SMA200 중 하나에 -12%~+5% 이내
+    def in_range(ref): return -0.12 <= close / ref - 1 <= 0.05
+    if not (in_range(sma60) or in_range(sma120) or in_range(sma200)):
+        return 0, ""
 
-    # SMA20 눌림 우선 (두 조건 동시 충족 시)
-    use_sma60 = near_sma60 and not near_sma20
-    ref_sma   = sma60 if use_sma60 else sma20
-    w_days    = 60    if use_sma60 else 30
-    w         = df.iloc[-w_days:]
+    # 하드게이트 4: RSI 과매수 제외
+    if rsi >= 70:
+        return 0, ""
 
-    # 1차 상승 확인 (C안: 15%로 강화)
-    rise = w["Close"].max() / w["Close"].iloc[0] - 1
-    if rise < 0.15:
-        return 0
+    # 점수 계산
+    sma200_slope = sma200 / sma200_60d - 1
+    s1 = _pts(sma200_slope, [(0.05, 20), (0.03, 15), (0.01, 10)])
+    s2 = 20 if ma_gap <= 0.07 else (15 if ma_gap <= 0.13 else 10)
 
-    # 눌림 확인: 고점 대비 3% 이상 하락
-    peak = w["High"].max()
-    if close >= peak * 0.97:
-        return 0
+    dist60  = abs(close / sma60  - 1)
+    dist120 = abs(close / sma120 - 1)
+    dist200 = abs(close / sma200 - 1)
+    min_dist = min(dist60, dist120, dist200)
+    s3 = 20 if min_dist <= 0.03 else (15 if min_dist <= 0.06 else 10)
 
-    # 기준 이평선보다 2% 이상 위 = 아직 눌림 시작 안 됨
-    if close > ref_sma * 1.02:
-        return 0
+    s4 = 20 if 40 <= rsi <= 60 else (15 if 35 <= rsi <= 65 else (10 if 30 <= rsi <= 70 else 0))
 
-    # ── 경로별 전용 게이트 ─────────────────────────────────────
-    if use_sma60:
-        # 골든60: SMA60 자체가 우상향이어야 (SMA20 게이트 면제)
-        sma60_10d = _safe(df, "SMA60", -10)
-        if sma60_10d is not None and sma60 <= sma60_10d:
-            return 0
-    else:
-        # 골든20: SMA20 우상향 + SMA20/SMA60 간격 유지
-        sma20_5d = _safe(df, "SMA20", -5)
-        sma60_5d = _safe(df, "SMA60", -5)
-        if sma20_5d is not None and sma20 <= sma20_5d:
-            return 0
-        if sma20_5d is not None and sma60_5d is not None and sma60_5d > 0:
-            if sma20 / sma60 - 1 < sma20_5d / sma60_5d - 1:
-                return 0
-    # ────────────────────────────────────────────────────────────
+    vol_ratio = vol / (vma20 + 1e-9) if (vol is not None and vma20 is not None) else 1.0
+    s5 = 20 if vol_ratio < 0.70 else (15 if vol_ratio < 0.85 else (10 if vol_ratio < 1.00 else 0))
 
-    pull_dist = abs(close / ref_sma - 1)
+    score = s1 + s2 + s3 + s4 + s5
 
-    # RSI 불리시 다이버전스
-    rsi_5d   = _safe(df, "RSI",   -5)
-    close_5d = _safe(df, "Close", -5)
-    bullish_div = (
-        rsi_5d is not None and close_5d is not None and close_5d > 0
-        and close <= close_5d
-        and rsi > rsi_5d
+    # 표시 문자열: SMA200 방향 + SMA20/60/120 대비 주가 위치
+    sma200_dir = "우상향" if sma200 > sma200_60d else "하락"
+    p20  = (close / sma20  - 1) * 100
+    p60  = (close / sma60  - 1) * 100
+    p120 = (close / sma120 - 1) * 100
+    display = (
+        f"SMA200 {sma200_dir} | "
+        f"SMA20 {p20:+.1f}% / SMA60 {p60:+.1f}% / SMA120 {p120:+.1f}%"
     )
 
-    s1 = _pts(rise, [(0.20, 20), (0.15, 15)])
-    s2 = 20 if pull_dist <= 0.03 else (15 if pull_dist <= 0.05 else 10)
-    s3 = 20 if bullish_div else (15 if 40 <= rsi <= 55 else (10 if 35 <= rsi <= 60 else 0))
-    s4 = _pts(1 - vol / vma20, [(0.30, 20), (0.15, 15), (0, 10)])
-
-    if use_sma60:
-        # 골든60: SMA60 > SMA120 (중기 추세 건강도)
-        if sma120 is not None and sma120 > 0:
-            s5 = _pts(sma60 / sma120 - 1, [(0.03, 20), (0.01, 15), (0, 10)])
-        else:
-            s5 = 10
-    else:
-        # 골든20: SMA20 > SMA60 간격
-        s5 = _pts(sma20 / sma60 - 1, [(0.03, 20), (0.01, 15), (0, 10)])
-
-    return s1 + s2 + s3 + s4 + s5
+    return score, display
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -374,7 +343,13 @@ def score_squeeze(df: pd.DataFrame, info: dict) -> int:
     s3 = 20 if conv <= 0.01 else (15 if conv <= 0.02 else (10 if conv <= 0.03 else 0))
     s5 = _pts(vol_ratio, [(1.20, 20), (1.10, 15), (0.90, 10)])
 
-    return s1 + s2 + s3 + s4 + s5
+    score = s1 + s2 + s3 + s4 + s5
+
+    # 표시 문자열: BB분위 + 변동폭 + SMA200 거리
+    sma200_str = f" | SMA200 {(close / sma200 - 1)*100:+.1f}%" if sma200 is not None else ""
+    display = f"BB 하위 {bb_pct*100:.0f}% | 변동폭 {rng*100:.1f}%{sma200_str}"
+
+    return score, display
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -463,7 +438,12 @@ def score_explosion(
     else:
         s5 = _pts(close / sma60 - 1, [(0.05, 20), (0.02, 15), (0, 10)])
 
-    return s1 + s2 + s3 + s4 + s5
+    score = s1 + s2 + s3 + s4 + s5
+
+    # 표시 문자열: 거래량배율 + 저항돌파 + 응축기간
+    display = f"거래량 {vol_ratio*100:.0f}% | 저항 {breakout_pct*100:+.1f}% | 응축 {consol_days}일"
+
+    return score, display
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -506,10 +486,14 @@ def run_signal_detection(
             log.debug(f"{name} 스킵 — 약세장 국면 (SMA20 < SMA60)")
             continue
         try:
-            s = func(*args)
+            result = func(*args)
+            if isinstance(result, tuple):
+                s, display = result
+            else:
+                s, display = result, ""
             threshold = MIN_SQUEEZE_SCORE if name == "응축" else MIN_SIGNAL_SCORE
             if s >= threshold:
-                detected.append({"name": name, "score": s})
+                detected.append({"name": name, "score": s, "display": display})
                 log.debug(f"{name} 시그널 발생 (점수: {s})")
         except Exception as e:
             log.warning(f"{name} 시그널 탐지 오류: {e}")

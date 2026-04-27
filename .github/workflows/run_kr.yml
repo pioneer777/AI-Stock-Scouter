@@ -3,14 +3,15 @@ name: 🇰🇷 KR 자동 실행
 on:
   schedule:
     # ※ GitHub Actions는 UTC 기준. KST = UTC+9
-    - cron: "0 2 * * 1-5"    # KST 11:00 (장중 SUMMARY)
-    - cron: "30 5 * * 1-5"   # KST 14:30 (장중 SUMMARY)
-    - cron: "0 8 * * 1-5"    # KST 17:00 (장마감 FULL)
+    # 한국 장: 09:00~15:30 KST
+    - cron: "0 22 * * 0-4"   # KST 07:00 장전 2H (일~목 밤 = 월~금 아침)
+    - cron: "15 3 * * 1-5"   # KST 12:15 장 중간
+    - cron: "30 7 * * 1-5"   # KST 16:30 장 종료 후 1H (기록)
 
-  workflow_dispatch:  # 수동 트리거 (긴급 재실행용)
+  workflow_dispatch:
 
 permissions:
-  contents: write   # signal_history 자동 커밋용
+  contents: write
 
 jobs:
   run-kr:
@@ -28,23 +29,11 @@ jobs:
       - name: 📦 의존성 설치
         run: pip install -r requirements.txt
 
-      - name: ▶️ KR SUMMARY (11:00 / 14:30)
+      - name: ▶️ KR 장전/장중 (07:00 / 12:15 KST) — 기록 없음
         if: |
           github.event_name == 'schedule' &&
-          (github.event.schedule == '0 2 * * 1-5' ||
-           github.event.schedule == '30 5 * * 1-5')
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:   ${{ secrets.CHAT_ID_KR }}
-          KIS_APP_KEY:        ${{ secrets.KIS_APP_KEY }}
-          KIS_APP_SECRET:     ${{ secrets.KIS_APP_SECRET }}
-          DART_API_KEY:       ${{ secrets.DART_API_KEY }}
-        run: python main.py --market KR --report SUMMARY
-
-      - name: ▶️ KR FULL (17:00)
-        if: |
-          github.event_name == 'schedule' &&
-          github.event.schedule == '0 8 * * 1-5'
+          (github.event.schedule == '0 22 * * 0-4' ||
+           github.event.schedule == '15 3 * * 1-5')
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.CHAT_ID_KR }}
@@ -54,23 +43,37 @@ jobs:
           DART_API_KEY:       ${{ secrets.DART_API_KEY }}
         run: python main.py --market KR --report FULL
 
-      - name: 🔧 수동 실행 (FULL 기본)
+      - name: ▶️ KR 장 종료 후 (16:30 KST) — 기록 O
+        if: |
+          github.event_name == 'schedule' &&
+          github.event.schedule == '30 7 * * 1-5'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.CHAT_ID_KR }}
+          PAGES_URL:          ${{ secrets.PAGES_URL }}
+          RECORD_SIGNALS:     "true"
+          KIS_APP_KEY:        ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET:     ${{ secrets.KIS_APP_SECRET }}
+          DART_API_KEY:       ${{ secrets.DART_API_KEY }}
+        run: python main.py --market KR --report FULL
+
+      - name: 🔧 수동 실행 (기록 O)
         if: github.event_name == 'workflow_dispatch'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.CHAT_ID_KR }}
           PAGES_URL:          ${{ secrets.PAGES_URL }}
+          RECORD_SIGNALS:     "true"
           KIS_APP_KEY:        ${{ secrets.KIS_APP_KEY }}
           KIS_APP_SECRET:     ${{ secrets.KIS_APP_SECRET }}
           DART_API_KEY:       ${{ secrets.DART_API_KEY }}
         run: python main.py --market KR --report FULL
 
-      # FULL 실행 후에만 signal_history + index HTML 커밋
-      - name: 💾 기록 커밋 (FULL 전용)
+      - name: 💾 기록 커밋 (장 종료 후 + 수동)
         if: |
           github.event_name == 'workflow_dispatch' ||
           (github.event_name == 'schedule' &&
-           github.event.schedule == '0 8 * * 1-5')
+           github.event.schedule == '30 7 * * 1-5')
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
