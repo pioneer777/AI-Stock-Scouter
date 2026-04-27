@@ -1,8 +1,9 @@
 """
 data_fetcher.py — 주가 데이터 수집 + 기술 지표 계산
-  - yfinance: KR/US OHLCV + 재무 정보
-  - KIS API: 기관/외인 순매수 시계열 (KR 전용, 1차)
-  - Naver Finance 크롤링: 기관/외인 순매수 TOP (KR 전용, fallback)
+  - pykrx : KR OHLCV + 지수 + 수급 (1차, KRX 공식 데이터)
+  - yfinance: US OHLCV + 재무 정보 (KR 재무는 DART 보완)
+  - KIS API: KR 수급 시계열 차트용 (pykrx 보완)
+  - Naver Finance: 수급 최종 fallback
 """
 
 import io
@@ -19,6 +20,13 @@ import pandas as pd
 import requests
 import yfinance as yf
 from bs4 import BeautifulSoup
+
+try:
+    from pykrx import stock as krx_stock
+    _PYKRX_OK = True
+except ImportError:
+    _PYKRX_OK = False
+    logging.getLogger(__name__).warning("pykrx 미설치 — KR 데이터는 yfinance fallback")
 
 log = logging.getLogger(__name__)
 
@@ -106,6 +114,135 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ══════════════════════════════════════════════════════════════════
+# pykrx — KR 전용 데이터 수집
+# ══════════════════════════════════════════════════════════════════
+
+def _period_to_dates(period: str) -> tuple[str, str]:
+    """"3y" → ("20230427", "20260427") 형식 변환."""
+    end  = date.today()
+    days = {"1y": 365, "2y": 730, "3y": 1095, "5d": 5, "1mo": 30}
+    delta = timedelta(days=days.get(period, 1095))
+    start = end - delta
+    return start.strftime("%Y%m%d"), end.strftime("%Y%m%d")
+
+
+def _rename_pykrx_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
+    """pykrx 한글 컬럼 → 표준 영어 컬럼명 변환."""
+    rename = {"시가": "Open", "고가": "High", "저가": "Low",
+              "종가": "Close", "거래량": "Volume", "거래대금": "Value"}
+    df = df.rename(columns=rename)
+    for col in ["Open", "High", "Low", "Close", "Volume"]:
+        if col not in df.columns:
+            return pd.DataFrame()
+    return df[["Open", "High", "Low", "Close", "Volume"]].copy()
+
+
+def fetch_stock_data_pykrx(code: str, period: str = "3y") -> pd.DataFrame | None:
+    """pykrx로 KR 종목 OHLCV + 시가총액 수집."""
+    if not _PYKRX_OK:
+        return None
+    clean = _clean_code(code)
+    from_dt, to_dt = _period_to_dates(period)
+    try:
+        df = krx_stock.get_market_ohlcv_by_date(from_dt, to_dt, clean)
+        if df is None or df.empty:
+            return None
+        df = _rename_pykrx_ohlcv(df)
+        if df.empty:
+            return None
+
+        # 시가총액 병합 (대형주 판별용 — 마지막 날만 빠르게)
+        try:
+            cap_df = krx_stock.get_market_cap_by_date(to_dt, to_dt, clean)
+            if cap_df is not None and not cap_df.empty:
+                df.attrs["market_cap"] = int(cap_df["시가총액"].iloc[-1])
+        except Exception:
+            pass
+
+        df.dropna(subset=["Close", "Volume"], inplace=True)
+        df = compute_indicators(df)
+        log.info(f"[{clean}] pykrx {len(df)}일 수집 완료 (최신: {df.index[-1].date()})")
+        return df
+    except Exception as e:
+        log.warning(f"[{clean}] pykrx 수집 실패: {e}")
+        return None
+
+
+def fetch_market_index_pykrx(market: str, period: str = "1y") -> pd.DataFrame | None:
+    """pykrx로 KOSPI(1001) / KOSDAQ(2001) 지수 수집."""
+    if not _PYKRX_OK:
+        return None
+    ticker = "1001" if market == "KR" else "2001"
+    from_dt, to_dt = _period_to_dates(period)
+    try:
+        df = krx_stock.get_index_ohlcv_by_date(from_dt, to_dt, ticker)
+        if df is None or df.empty:
+            return None
+        df = df.rename(columns={"시가": "Open", "고가": "High",
+                                 "저가": "Low",  "종가": "Close", "거래량": "Volume"})
+        return df[["Open", "High", "Low", "Close", "Volume"]].copy()
+    except Exception as e:
+        log.warning(f"pykrx 지수 수집 실패: {e}")
+        return None
+
+
+def fetch_supply_demand_pykrx(stock_list: dict) -> dict:
+    """
+    pykrx: 관심종목 기관/외인 당일 순매수 TOP3 (KIS fallback용).
+    반환: {"기관": [...], "외인": [...]}
+    """
+    if not _PYKRX_OK:
+        return {"기관": [], "외인": []}
+    result  = {"기관": [], "외인": []}
+    today   = date.today().strftime("%Y%m%d")
+    records = []
+    for code, meta in stock_list.items():
+        clean = _clean_code(code)
+        name  = meta.get("종목명", code)
+        try:
+            df = krx_stock.get_market_trading_value_by_date(today, today, clean)
+            if df is None or df.empty:
+                continue
+            row = df.iloc[-1]
+            inst = int(row.get("기관합계", 0) or 0)
+            forg = int(row.get("외국인합계", 0) or 0)
+            records.append({"종목명": name, "기관": inst // 100_000_000,
+                             "외인": forg // 100_000_000})
+            time.sleep(0.05)
+        except Exception:
+            pass
+
+    if records:
+        df_r = pd.DataFrame(records)
+        for col, label in [("기관", "기관"), ("외인", "외인")]:
+            top = (df_r[df_r[col] > 0]
+                   .nlargest(3, col)[["종목명", col]]
+                   .rename(columns={col: "순매수"})
+                   .to_dict("records"))
+            result[label] = top
+    return result
+
+
+def fetch_stock_supply_demand_pykrx(code: str) -> pd.DataFrame:
+    """pykrx: 종목 기관/외인 일별 순매수 시계열 (차트용)."""
+    if not _PYKRX_OK:
+        return pd.DataFrame()
+    clean = _clean_code(code)
+    from_dt, to_dt = _period_to_dates("3y")
+    try:
+        df = krx_stock.get_market_trading_value_by_date(from_dt, to_dt, clean)
+        if df is None or df.empty:
+            return pd.DataFrame()
+        df = df.rename(columns={"기관합계": "기관", "외국인합계": "외인"})
+        df["기관"] = df["기관"] // 100_000_000  # 원 → 억
+        df["외인"] = df["외인"] // 100_000_000
+        return df[["기관", "외인"]].copy()
+    except Exception as e:
+        log.warning(f"[{clean}] pykrx 수급 시계열 실패: {e}")
+        return pd.DataFrame()
+
+
+# ══════════════════════════════════════════════════════════════════
 # 주가 데이터 수집
 # ══════════════════════════════════════════════════════════════════
 
@@ -117,10 +254,19 @@ def fetch_stock_data(
     ticker_override: str | None = None,
 ) -> pd.DataFrame | None:
     """
-    yfinance로 OHLCV 수집 후 기술 지표 계산.
-    ticker_override: stock_list의 '티커' 필드 (예: "005930.KS") — 있으면 최우선 사용
-    period: "3y" (3년, 레인지버튼 전 구간 커버)
+    OHLCV 수집 후 기술 지표 계산.
+    KR: pykrx 우선 → yfinance fallback
+    US: yfinance
+    ticker_override: stock_list의 '티커' 필드 (예: "005930.KS") — 있으면 yfinance 직접 사용
     """
+    # KR: pykrx 우선 (ticker_override 없을 때 — KRX 공식 데이터)
+    if market == "KR" and not ticker_override:
+        df = fetch_stock_data_pykrx(code, period)
+        if df is not None:
+            return df
+        log.info(f"[{code}] pykrx 실패 — yfinance fallback")
+
+    # US 또는 KR pykrx 실패 시 yfinance
     if ticker_override:
         ticker = ticker_override
     elif market == "KR":
@@ -133,7 +279,7 @@ def fetch_stock_data(
             ticker,
             period=period,
             progress=False,
-            auto_adjust=True,   # 수정주가 자동 적용
+            auto_adjust=True,
         )
     except Exception as e:
         log.error(f"[{code}] yfinance 다운로드 실패: {e}")
@@ -156,7 +302,14 @@ def fetch_stock_data(
 
 
 def fetch_market_index(market: str, period: str = "3mo") -> pd.DataFrame | None:
-    """KOSPI(^KS11) 또는 S&P500(^GSPC) 지수 데이터."""
+    """KOSPI/KOSDAQ(pykrx) 또는 S&P500(yfinance) 지수 데이터."""
+    # KR: pykrx 우선
+    if market == "KR":
+        df = fetch_market_index_pykrx(market, period)
+        if df is not None and not df.empty:
+            return df
+        log.info("pykrx 지수 실패 — yfinance fallback")
+
     ticker = "^KS11" if market == "KR" else "^GSPC"
     try:
         df = yf.download(ticker, period=period, progress=False, auto_adjust=True)
@@ -458,10 +611,15 @@ def fetch_supply_demand() -> dict:
 def fetch_stock_supply_demand(code: str, market_name: str = "") -> pd.DataFrame:
     """
     특정 종목 기관/외인 일별 순매수 시계열 (차트 2단용).
-    KIS API 우선, 실패 시 Naver fallback.
+    KIS → pykrx → Naver 순서로 fallback.
     반환: DataFrame (index=datetime, columns=[기관, 외인])
     """
     df = fetch_stock_supply_demand_kis(code, market_name=market_name)
+    if not df.empty:
+        return df
+
+    # pykrx fallback
+    df = fetch_stock_supply_demand_pykrx(code)
     if not df.empty:
         return df
 
@@ -653,6 +811,9 @@ def fetch_all_stocks(
                                 ticker_override=ticker_override)
 
         if df is not None:
+            # pykrx market_cap → info 보완 (KR yfinance 시총 누락 대비)
+            if market == "KR" and not info.get("market_cap") and df.attrs.get("market_cap"):
+                info["market_cap"] = df.attrs["market_cap"]
             data[code] = {"df": df, "info": info, "meta": meta}
         else:
             log.warning(f"[{name}] 데이터 수집 실패 — 스킵")

@@ -21,6 +21,7 @@ from data_fetcher import (
     fetch_market_index,
     fetch_supply_demand,
     fetch_supply_demand_kis,
+    fetch_supply_demand_pykrx,
     fetch_current_price,
 )
 from signal_detector import (
@@ -312,7 +313,10 @@ def run(market: str, report_mode: str) -> None:
 
         supply_top = fetch_supply_demand_kis(stock_list)
         if not supply_top.get("기관") and not supply_top.get("외인"):
-            log.info("KIS 수급 없음 — Naver fallback")
+            log.info("KIS 수급 없음 — pykrx fallback")
+            supply_top = fetch_supply_demand_pykrx(stock_list)
+        if not supply_top.get("기관") and not supply_top.get("외인"):
+            log.info("pykrx 수급 없음 — Naver fallback")
             supply_top = fetch_supply_demand()
 
     # ── 텔레그램 메시지 생성 ──────────────────────────────────────

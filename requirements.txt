@@ -1,4 +1,5 @@
 yfinance>=0.2.40
+pykrx>=1.0.45
 pandas>=2.0.0
 numpy>=1.26.0
 plotly>=5.20.0
