@@ -13,7 +13,7 @@ import argparse
 import json
 import logging
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from data_fetcher import (
@@ -177,7 +177,8 @@ def build_pnl_table(
 
 def run(market: str, report_mode: str) -> None:
     today    = date.today().isoformat()
-    now_dt   = datetime.now()
+    _KST     = timezone(timedelta(hours=9))
+    now_dt   = datetime.now(_KST)
     day_kr   = ["월", "화", "수", "목", "금", "토", "일"][now_dt.weekday()]
     now_str  = now_dt.strftime(f"%m.%d({day_kr}) %H:%M")
     is_full       = report_mode == "FULL"

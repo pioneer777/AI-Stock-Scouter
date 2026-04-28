@@ -24,7 +24,8 @@ TREND_LABELS = {
     "상승지속":   "📈",
     "건강한조정": "📉",
     "횡보중":     "➡️",
-    "하락주의":   "🔻",
+    "단기하락":   "🔻",
+    "추세하락":   "⛔",
 }
 
 
@@ -34,6 +35,12 @@ TREND_LABELS = {
 
 def is_large_cap(info: dict) -> bool:
     return info.get("market_cap", 0) >= 1_000_000_000_000
+
+
+def _b(pct: float, thr: float = 3.0) -> str:
+    """±thr% 이내면 볼드, 아니면 일반 텍스트."""
+    s = f"{pct:+.1f}%"
+    return f"<b>{s}</b>" if abs(pct) <= thr else s
 
 
 def _safe(df: pd.DataFrame, col: str, idx: int = -1):
@@ -183,8 +190,8 @@ def score_grand(df: pd.DataFrame, info: dict) -> tuple[int, str]:
 
     sma120_pct = (close / sma120 - 1) * 100
     sma200_pct = (close / sma200 - 1) * 100 if sma200 else None
-    sma200_str = f" / SMA200 {sma200_pct:+.1f}%" if sma200_pct is not None else ""
-    display = f"크로스 {cross_days}일전 | SMA120 {sma120_pct:+.1f}%{sma200_str} | RSI {rsi:.0f}"
+    sma200_str = f" / SMA200 {_b(sma200_pct)}" if sma200_pct is not None else ""
+    display = f"크로스 {cross_days}일전 | SMA120 {_b(sma120_pct)}{sma200_str} | RSI {rsi:.0f}"
 
     return score, display
 
@@ -266,15 +273,12 @@ def score_golden(df: pd.DataFrame, info: dict) -> tuple[int, str]:
 
     score = s1 + s2 + s3 + s4 + s5
 
-    # 표시 문자열: SMA200 방향 + SMA20/60/120 대비 주가 위치
-    sma200_dir = "우상향" if sma200 > sma200_60d else "하락"
+    # 표시 문자열: SMA20/60/120/200 대비 주가 위치 (±3% 이내 볼드)
     p20  = (close / sma20  - 1) * 100
     p60  = (close / sma60  - 1) * 100
     p120 = (close / sma120 - 1) * 100
-    display = (
-        f"SMA200 {sma200_dir} | "
-        f"SMA20 {p20:+.1f}% / SMA60 {p60:+.1f}% / SMA120 {p120:+.1f}%"
-    )
+    p200 = (close / sma200 - 1) * 100
+    display = f"SMA20 {_b(p20)} / SMA60 {_b(p60)} / SMA120 {_b(p120)} / SMA200 {_b(p200)}"
 
     return score, display
 
@@ -345,8 +349,8 @@ def score_squeeze(df: pd.DataFrame, info: dict) -> int:
 
     score = s1 + s2 + s3 + s4 + s5
 
-    # 표시 문자열: BB분위 + 변동폭 + SMA200 거리
-    sma200_str = f" | SMA200 {(close / sma200 - 1)*100:+.1f}%" if sma200 is not None else ""
+    # 표시 문자열: BB분위 + 변동폭 + SMA200 거리 (±3% 이내 볼드)
+    sma200_str = f" | SMA200 {_b((close / sma200 - 1)*100)}" if sma200 is not None else ""
     display = f"BB 하위 {bb_pct*100:.0f}% | 변동폭 {rng*100:.1f}%{sma200_str}"
 
     return score, display
@@ -527,9 +531,11 @@ def classify_trend(df: pd.DataFrame) -> str:
 
     if above_sma20 and above_sma60 and ret_20 > 0.03:
         return "상승지속"
-    elif above_sma60 and not above_sma20 and (rsi is None or rsi > 35):
+    elif above_sma60 and not above_sma20 and (rsi is None or rsi > 30):
         return "건강한조정"
     elif above_sma200 and abs(ret_20) < 0.05:
         return "횡보중"
+    elif above_sma200:
+        return "단기하락"
     else:
-        return "하락주의"
+        return "추세하락"

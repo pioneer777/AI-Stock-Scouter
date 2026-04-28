@@ -81,23 +81,30 @@ _CHART_JS = r"""
     function subMonths(d, n)  { var dt=new Date(d); dt.setMonth(dt.getMonth()-n); return dt.toISOString().slice(0,10); }
     function subYears(d, n)   { var dt=new Date(d); dt.setFullYear(dt.getFullYear()-n); return dt.toISOString().slice(0,10); }
 
+    /* Plotly.js는 날짜를 내부적으로 ms 타임스탬프(숫자)로 변환해 저장 */
+    function toMs(v) {
+        return (typeof v === 'number') ? v : new Date(String(v)).getTime();
+    }
+    function msToIso(ms) {
+        return new Date(ms).toISOString().slice(0, 10);
+    }
     function getDataEnd() {
-        var latest = '';
+        var latest = -Infinity;
         gd.data.forEach(function (tr) {
             if (!tr.x || !tr.x.length) return;
-            var s = String(tr.x[tr.x.length-1]).slice(0,10);
-            if (s > latest) latest = s;
+            var ms = toMs(tr.x[tr.x.length - 1]);
+            if (!isNaN(ms) && ms > latest) latest = ms;
         });
-        return latest || new Date().toISOString().slice(0,10);
+        return isFinite(latest) ? msToIso(latest) : new Date().toISOString().slice(0, 10);
     }
     function getDataStart() {
-        var earliest = '';
+        var earliest = Infinity;
         gd.data.forEach(function (tr) {
             if (!tr.x || !tr.x.length) return;
-            var s = String(tr.x[0]).slice(0,10);
-            if (!earliest || s < earliest) earliest = s;
+            var ms = toMs(tr.x[0]);
+            if (!isNaN(ms) && ms < earliest) earliest = ms;
         });
-        return earliest || new Date().toISOString().slice(0,10);
+        return isFinite(earliest) ? msToIso(earliest) : new Date().toISOString().slice(0, 10);
     }
 
     /* ── 가시 x 구간 내 y 최솟값/최댓값 ────────────────────────── */
@@ -122,22 +129,30 @@ _CHART_JS = r"""
 
     /* ── x + 모든 y 동시 relayout ───────────────────────────────── */
     function applyRange(x0, x1) {
-        var ms0 = new Date(x0).getTime(), ms1 = new Date(x1).getTime();
-        var upd = { 'xaxis.range[0]': x0, 'xaxis.range[1]': x1 };
+        var ms0 = toMs(x0), ms1 = toMs(x1);
+        var upd = {
+            'xaxis.autorange': false,
+            'xaxis.range': [x0, x1],
+        };
 
         var p1 = yBounds('y', ms0, ms1);
         if (p1) {
             var pad1 = Math.max(p1[1]-p1[0], p1[0]*0.005) * 0.04;
+            upd['yaxis.autorange'] = false;
             upd['yaxis.range'] = [p1[0]-pad1, p1[1]+pad1*1.5];
         }
         var p2 = yBounds('y2', ms0, ms1);
-        if (p2) upd['yaxis2.range'] = [0, p2[1]*1.15];
+        if (p2) {
+            upd['yaxis2.autorange'] = false;
+            upd['yaxis2.range'] = [0, p2[1]*1.15];
+        }
         var p3 = yBounds('y3', ms0, ms1);
         if (p3) {
             var r3 = Math.max(p3[1]-p3[0], Math.abs(p3[0]||0.01)*0.2);
+            upd['yaxis3.autorange'] = false;
             upd['yaxis3.range'] = [p3[0]-r3*0.12, p3[1]+r3*0.12];
         }
-        Plotly.relayout(gd, upd);
+        try { Plotly.relayout(gd, upd); } catch(e) { console.error('applyRange:', e); }
     }
 
     /* ── 버튼별 [x0, x1] 계산 ────────────────────────────────────
@@ -331,13 +346,14 @@ def generate_chart(
                 hoverinfo="skip",
             ), row=1, col=1)
 
-    # 시그널 범례 더미 — legend2 (chart1 우측 상단 외부)
+    # 시그널 범례 더미 — 2×2: legend2(그랜드/골든) + legend5(응축/폭발)
+    _SIG_LEG = {"그랜드": "legend2", "골든": "legend2", "응축": "legend5", "폭발": "legend5"}
     for sig_name, sig_color in SIGNAL_COLORS.items():
         fig.add_trace(go.Scatter(
             x=[None], y=[None], mode="markers",
             marker=dict(color=sig_color, size=11, symbol="square"),
             name=sig_name, showlegend=True,
-            legend="legend2", hoverinfo="skip",
+            legend=_SIG_LEG[sig_name], hoverinfo="skip",
         ), row=1, col=1)
 
     # ════════════════════════════════════════════════════════════
@@ -532,7 +548,7 @@ def generate_chart(
         rsi_color  = "#EF5350" if latest_rsi >= 70 else ("#1E88E5" if latest_rsi <= 30 else "#555555")
         annotations.append(dict(
             x=0.99, xref="paper",
-            y=_CHART3_TOP - 0.01, yref="paper",
+            y=_CHART3_TOP - 0.045, yref="paper",
             text=f"<b>RSI {latest_rsi:.0f}</b>",
             showarrow=False,
             bgcolor=rsi_color,
@@ -574,7 +590,7 @@ def generate_chart(
         dragmode=False,
         hovermode="x unified",
         hoverlabel=dict(bgcolor="#F5F5F5", font_color="#222222", bordercolor="#CCCCCC"),
-        margin=dict(l=60, r=60, t=80, b=40),
+        margin=dict(l=60, r=60, t=105, b=40),
 
         # legend: SMA — chart1 좌측 상단 외부
         legend=dict(
@@ -586,8 +602,18 @@ def generate_chart(
             bordercolor="#DDDDDD", borderwidth=1,
             itemsizing="constant",
         ),
-        # legend2: 시그널 — chart1 우측 상단 외부
+        # legend2: 시그널 1행(그랜드/골든) — chart1 우측 상단 외부
         legend2=dict(
+            orientation="h",
+            x=1.0, y=1.07,
+            xanchor="right", yanchor="bottom",
+            font=dict(size=11, color="#333333"),
+            bgcolor="rgba(255,255,255,0.85)",
+            bordercolor="#DDDDDD", borderwidth=1,
+            itemsizing="constant",
+        ),
+        # legend5: 시그널 2행(응축/폭발) — legend2 바로 아래
+        legend5=dict(
             orientation="h",
             x=1.0, y=1.02,
             xanchor="right", yanchor="bottom",
@@ -606,11 +632,11 @@ def generate_chart(
             bordercolor="#DDDDDD", borderwidth=1,
             itemsizing="constant",
         ),
-        # legend4: RSI — chart3 우측 상단 외부
+        # legend4: RSI — chart3 우측 상단 내부 (RSI 값 박스 위에 위아래 정렬)
         legend4=dict(
             orientation="h",
-            x=1.0, y=_CHART3_TOP + 0.005,
-            xanchor="right", yanchor="bottom",
+            x=1.0, y=_CHART3_TOP - 0.005,
+            xanchor="right", yanchor="top",
             font=dict(size=10, color="#333333"),
             bgcolor="rgba(255,255,255,0.85)",
             bordercolor="#DDDDDD", borderwidth=1,

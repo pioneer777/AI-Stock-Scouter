@@ -3,17 +3,14 @@ name: 🇺🇸 US 자동 실행
 on:
   schedule:
     # ※ GitHub Actions는 UTC 기준
-    # 미국 장: 09:30~16:00 EST(UTC-5) / EDT(UTC-4, 서머타임)
+    # 미국 장: 09:30~16:00 EDT(UTC-4) 또는 EST(UTC-5)
     #
-    # [서머타임 EDT, UTC-4] 3월 둘째 일 ~ 11월 첫째 일
-    - cron: "30 11 * * 1-5"  # 07:30 EDT 장전 2H  (KST 20:30)
-    - cron: "45 16 * * 1-5"  # 12:45 EDT 장 중간  (KST 01:45)
-    - cron: "0 21 * * 1-5"   # 17:00 EDT 장 종료 후 1H (KST 06:00) — 기록
+    # GitHub Actions 딜레이(30분~2시간)를 흡수하기 위해 목표 수신 시간보다 일찍 발사.
+    # EDT/EST 전환(1시간 차이)은 단일 크론으로 통합 — 계절별 1h 드리프트 허용.
     #
-    # [표준시 EST, UTC-5] 11월 첫째 일 ~ 3월 둘째 일
-    - cron: "30 12 * * 1-5"  # 07:30 EST 장전 2H  (KST 21:30)
-    - cron: "45 17 * * 1-5"  # 12:45 EST 장 중간  (KST 02:45)
-    - cron: "0 22 * * 1-5"   # 17:00 EST 장 종료 후 1H (KST 07:00) — 기록
+    - cron: "30 10 * * 1-5"  # UTC 10:30 → EDT 06:30 / EST 05:30 → 딜레이 후 KST ~20:30 도착 목표 (장전 2H)
+    - cron: "30 15 * * 1-5"  # UTC 15:30 → EDT 11:30 / EST 10:30 → 딜레이 후 KST ~01:30 도착 목표 (장 중간)
+    - cron: "0 22 * * 1-5"   # UTC 22:00 → EDT 18:00 / EST 17:00 → 장마감 후 기록 (공통)
 
   workflow_dispatch:
 
@@ -39,21 +36,18 @@ jobs:
       - name: ▶️ US 장전/장중 — 기록 없음
         if: |
           github.event_name == 'schedule' &&
-          (github.event.schedule == '30 11 * * 1-5' ||
-           github.event.schedule == '45 16 * * 1-5' ||
-           github.event.schedule == '30 12 * * 1-5' ||
-           github.event.schedule == '45 17 * * 1-5')
+          (github.event.schedule == '30 10 * * 1-5' ||
+           github.event.schedule == '30 15 * * 1-5')
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.CHAT_ID_US }}
           PAGES_URL:          ${{ secrets.PAGES_URL }}
         run: python main.py --market US --report FULL
 
-      - name: ▶️ US 장 종료 후 — 기록 O (EDT 17:00 / EST 17:00)
+      - name: ▶️ US 장 종료 후 — 기록 O
         if: |
           github.event_name == 'schedule' &&
-          (github.event.schedule == '0 21 * * 1-5' ||
-           github.event.schedule == '0 22 * * 1-5')
+          github.event.schedule == '0 22 * * 1-5'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.CHAT_ID_US }}
@@ -74,8 +68,7 @@ jobs:
         if: |
           github.event_name == 'workflow_dispatch' ||
           (github.event_name == 'schedule' &&
-           (github.event.schedule == '0 21 * * 1-5' ||
-            github.event.schedule == '0 22 * * 1-5'))
+           github.event.schedule == '0 22 * * 1-5')
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

@@ -4,9 +4,13 @@ on:
   schedule:
     # ※ GitHub Actions는 UTC 기준. KST = UTC+9
     # 한국 장: 09:00~15:30 KST
-    - cron: "0 22 * * 0-4"   # KST 07:00 장전 2H (일~목 밤 = 월~금 아침)
-    - cron: "15 3 * * 1-5"   # KST 12:15 장 중간
-    - cron: "30 7 * * 1-5"   # KST 16:30 장 종료 후 1H (기록)
+    #
+    # GitHub Actions 딜레이(30분~2시간)를 흡수하기 위해 목표 수신 시간보다 일찍 발사.
+    # 03:00 UTC 근처는 전 세계 스케줄 피크 → 의도적으로 회피.
+    #
+    - cron: "30 20 * * 0-4"  # UTC 20:30 (KST 05:30) → 딜레이 후 KST ~07:00 도착 목표 (장전 2H)
+    - cron: "0 1 * * 1-5"   # UTC 01:00 (KST 10:00) → 딜레이 후 KST ~12:00 도착 목표 (장 중간)
+    - cron: "30 7 * * 1-5"  # UTC 07:30 (KST 16:30) → 장 종료 후 (기록)
 
   workflow_dispatch:
 
@@ -29,11 +33,11 @@ jobs:
       - name: 📦 의존성 설치
         run: pip install -r requirements.txt
 
-      - name: ▶️ KR 장전/장중 (07:00 / 12:15 KST) — 기록 없음
+      - name: ▶️ KR 장전/장중 — 기록 없음
         if: |
           github.event_name == 'schedule' &&
-          (github.event.schedule == '0 22 * * 0-4' ||
-           github.event.schedule == '15 3 * * 1-5')
+          (github.event.schedule == '30 20 * * 0-4' ||
+           github.event.schedule == '0 1 * * 1-5')
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.CHAT_ID_KR }}
@@ -43,7 +47,7 @@ jobs:
           DART_API_KEY:       ${{ secrets.DART_API_KEY }}
         run: python main.py --market KR --report FULL
 
-      - name: ▶️ KR 장 종료 후 (16:30 KST) — 기록 O
+      - name: ▶️ KR 장 종료 후 (KST 16:30) — 기록 O
         if: |
           github.event_name == 'schedule' &&
           github.event.schedule == '30 7 * * 1-5'
