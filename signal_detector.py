@@ -535,7 +535,5 @@ def classify_trend(df: pd.DataFrame) -> str:
         return "건강한조정"
     elif above_sma200 and abs(ret_20) < 0.05:
         return "횡보중"
-    elif above_sma200:
-        return "단기하락"
     else:
-        return "추세하락"
+        return "하락주의"
