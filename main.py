@@ -99,13 +99,11 @@ def record_signals(
     history: dict,
     code: str,
     name: str,
-    signals: list[str],
+    signals: list[dict],
     current_price: float,
     today: str,
 ) -> dict:
-    expiry = (
-        date.fromisoformat(today) + timedelta(days=365)
-    ).isoformat()
+    expiry = (date.fromisoformat(today) + timedelta(days=365)).isoformat()
 
     if code not in history:
         history[code] = []
@@ -116,17 +114,24 @@ def record_signals(
     }
 
     for sig in signals:
-        if sig in existing:
-            log.info(f"[{name}] {sig} — 유효기간 내 기존 기록, 스킵")
+        sig_name = sig["name"] if isinstance(sig, dict) else sig
+        if sig_name in existing:
+            log.info(f"[{name}] {sig_name} — 유효기간 내 기존 기록, 스킵")
             continue
-        history[code].append({
+        entry = {
             "종목명":      name,
-            "시그널":      sig,
+            "시그널":      sig_name,
             "선정일":      today,
             "진입가":      current_price,
             "유효기간만료": expiry,
-        })
-        log.info(f"[{name}] {sig} 기록 → 진입가 {current_price:,.0f}")
+        }
+        if isinstance(sig, dict):
+            if sig.get("stock_type"):
+                entry["종목유형"] = sig["stock_type"]
+            if sig.get("position"):
+                entry["SMA위치"] = sig["position"]
+        history[code].append(entry)
+        log.info(f"[{name}] {sig_name} 기록 → 진입가 {current_price:,.0f}")
 
     return history
 
@@ -263,9 +268,8 @@ def run(market: str, report_mode: str) -> None:
 
             # 장 종료 후 실행(RECORD_SIGNALS=true)에서만 히스토리 기록
             if should_record:
-                signal_names = [s["name"] for s in signals]
                 signal_history = record_signals(
-                    signal_history, code, name, signal_names, current_price, today
+                    signal_history, code, name, signals, current_price, today
                 )
         else:
             # 추세 분류 (시그널 없는 종목만 섹션4)

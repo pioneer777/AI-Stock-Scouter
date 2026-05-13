@@ -23,3 +23,7 @@ build/
 
 # 로컬 테스트 임시파일
 *.log
+
+# 로컬 전용 (git 제외)
+.claude/
+*_backup.md

@@ -16,10 +16,10 @@ log = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).parent
 
 SIGNAL_ICONS = {
-    "그랜드": "🟢",
-    "골든":   "🟡",
-    "응축":   "🟣",
-    "폭발":   "🔴",
+    "전선수렴":      "🔴",
+    "SMA20+60+120": "🟡",
+    "SMA20+60":     "🟢",
+    "SMA20":        "🔵",
 }
 
 TREND_ICONS = {
@@ -39,10 +39,17 @@ TREND_DESC = {
 }
 
 SIGNAL_COLORS = {
-    "그랜드": "#00C851",
-    "골든":   "#FFB300",
-    "응축":   "#AA00FF",
-    "폭발":   "#FF3D00",
+    "전선수렴":      "#FF3D00",
+    "SMA20+60+120": "#FFB300",
+    "SMA20+60":     "#00C853",
+    "SMA20":        "#2196F3",
+}
+
+SIG_SHORT = {
+    "전선수렴":      "전선",
+    "SMA20+60+120": "3선",
+    "SMA20+60":     "2선",
+    "SMA20":        "S20",
 }
 
 
@@ -96,22 +103,20 @@ def _build_sec1(new_signals: list[dict], header: str, pages_url: str, market: st
             warn = " ⚠️" if item.get("outlook") == "negative" else ""
             url  = _chart_link(pages_url, market, item["code"], item["name"])
             for sig in item["signals"]:
-                sig_name = sig["name"] if isinstance(sig, dict) else sig
-                display  = sig.get("display", "") if isinstance(sig, dict) else ""
-                score    = sig.get("score", 0) if isinstance(sig, dict) else 0
-                info_str = display if display else f"★{score}"
-                label    = f"{_linked(item['name'], url)}{warn}  <i>{info_str}</i>"
+                sig_name   = sig["name"]        if isinstance(sig, dict) else sig
+                stock_type = sig.get("stock_type", "") if isinstance(sig, dict) else ""
+                display    = sig.get("display",    "") if isinstance(sig, dict) else ""
+                type_str   = f"({stock_type}·{display})" if stock_type and display else ""
+                label      = f"{_linked(item['name'], url)}{warn}{type_str}"
                 by_type.setdefault(sig_name, []).append(label)
 
         for sig_name, icon in SIGNAL_ICONS.items():
-            names = by_type.get(sig_name, [])
-            if names:
-                pad = " " * max(0, 4 - len(sig_name))
-                for label in names:
-                    lines.append(f"[{sig_name}{icon}]{pad}  {label}")
+            stocks = by_type.get(sig_name, [])
+            if stocks:
+                lines.append(f"[{sig_name}{icon}]  {' | '.join(stocks)}")
 
     lines.append("")
-    lines.append("  <i>그랜드🟢 1~3개월 | 골든🟡 2~4주 | 응축🟣 1~6개월 | 폭발🔴 1~2주</i>")
+    lines.append("  <i>전선수렴🔴 역대급 | SMA20+60+120🟡 강한매집 | SMA20+60🟢 중기지지 | SMA20🔵 단기지지</i>")
 
     return "\n".join(lines), signal_codes
 
@@ -140,12 +145,13 @@ def _build_sec2_chunks(table: list[dict], header: str) -> list[str]:
             "<code>" + "─" * 48 + "</code>",
         ]
         for r in rows:
-            sig_icon = SIGNAL_ICONS.get(r["signal"], "")
+            sig_icon  = SIGNAL_ICONS.get(r["signal"], "")
+            sig_short = SIG_SHORT.get(r["signal"], r["signal"][:3])
             d = r["entry_date"][5:].replace("-", "/")
             lines.append(
                 f"<code>"
                 f"{r['name'][:7]:<9}"
-                f"{r['signal'][:3]}{sig_icon}  "
+                f"{sig_short}{sig_icon}  "
                 f"{d}  "
                 f"{_fmt_price(r['entry_px']):>8} "
                 f"{_fmt_price(r['cur_px']):>8} "

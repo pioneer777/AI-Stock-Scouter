@@ -27,10 +27,10 @@ BASE_DIR   = Path(__file__).parent
 CHARTS_DIR = BASE_DIR / "charts"
 
 SIGNAL_COLORS = {
-    "그랜드": "#00C851",
-    "골든":   "#FFB300",
-    "응축":   "#AA00FF",
-    "폭발":   "#FF3D00",
+    "전선수렴":      "#FF3D00",
+    "SMA20+60+120": "#FFB300",
+    "SMA20+60":     "#00C853",
+    "SMA20":        "#2196F3",
 }
 
 # 중요도: SMA200 > SMA20 > SMA60 = SMA120
@@ -346,8 +346,13 @@ def generate_chart(
                 hoverinfo="skip",
             ), row=1, col=1)
 
-    # 시그널 범례 더미 — 2×2: legend2(그랜드/골든) + legend5(응축/폭발)
-    _SIG_LEG = {"그랜드": "legend2", "골든": "legend2", "응축": "legend5", "폭발": "legend5"}
+    # 시그널 범례 더미 — 2×2: legend2(전선수렴/3선) + legend5(2선/SMA20)
+    _SIG_LEG = {
+        "전선수렴":      "legend2",
+        "SMA20+60+120": "legend2",
+        "SMA20+60":     "legend5",
+        "SMA20":        "legend5",
+    }
     for sig_name, sig_color in SIGNAL_COLORS.items():
         fig.add_trace(go.Scatter(
             x=[None], y=[None], mode="markers",
@@ -602,7 +607,7 @@ def generate_chart(
             bordercolor="#DDDDDD", borderwidth=1,
             itemsizing="constant",
         ),
-        # legend2: 시그널 1행(그랜드/골든) — chart1 우측 상단 외부
+        # legend2: 시그널 1행(전선수렴/SMA20+60+120) — chart1 우측 상단 외부
         legend2=dict(
             orientation="h",
             x=1.0, y=1.07,
@@ -612,7 +617,7 @@ def generate_chart(
             bordercolor="#DDDDDD", borderwidth=1,
             itemsizing="constant",
         ),
-        # legend5: 시그널 2행(응축/폭발) — legend2 바로 아래
+        # legend5: 시그널 2행(SMA20+60/SMA20) — legend2 바로 아래
         legend5=dict(
             orientation="h",
             x=1.0, y=1.02,
