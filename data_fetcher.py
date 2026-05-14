@@ -322,9 +322,11 @@ def fetch_market_index(market: str, period: str = "3mo") -> pd.DataFrame | None:
         return None
 
 
-def fetch_current_price(code: str, market: str, exchange: str | None = None) -> float | None:
-    """현재가만 빠르게 조회 (승패 테이블용)."""
-    df = fetch_stock_data(code, market, period="5d", exchange=exchange)
+def fetch_current_price(code: str, market: str, exchange: str | None = None,
+                        ticker_override: str | None = None) -> float | None:
+    """현재가만 빠르게 조회 (승패 테이블용). ticker_override로 정확한 티커 사용."""
+    df = fetch_stock_data(code, market, period="5d", exchange=exchange,
+                          ticker_override=ticker_override)
     if df is None or df.empty:
         return None
     return float(df["Close"].iloc[-1])

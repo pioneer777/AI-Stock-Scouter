@@ -167,9 +167,12 @@ def build_pnl_table(
             if not entry_px:
                 continue
 
-            # 현재가 조회 (stock_list에 exchange 정보 우선 사용)
-            exchange = stock_list.get(code, {}).get("exchange")
-            cur_px = fetch_current_price(code, market, exchange=exchange)
+            # 현재가 조회 — 신호 감지 때와 동일한 티커 사용 (MKKGY 등 ADR 대응)
+            stock_meta      = stock_list.get(code, {})
+            exchange        = stock_meta.get("exchange")
+            ticker_override = stock_meta.get("티커")
+            cur_px = fetch_current_price(code, market, exchange=exchange,
+                                         ticker_override=ticker_override)
             if cur_px is None:
                 cur_px = entry_px  # 조회 실패 시 진입가 유지
 
