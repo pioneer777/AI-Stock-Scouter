@@ -124,8 +124,14 @@ def record_signals(
         if e.get("유효기간만료", "") >= today
     }
 
+    # 강한 시그널만 승패 기록 (빈번한 SMA20+60 / SMA20 제외)
+    RECORD_TARGETS = {"전선수렴", "SMA20+60+120"}
+
     for sig in signals:
         sig_name = sig["name"] if isinstance(sig, dict) else sig
+        if sig_name not in RECORD_TARGETS:
+            log.debug(f"[{name}] {sig_name} — 승패 기록 대상 아님 (스킵)")
+            continue
         if sig_name in existing:
             log.info(f"[{name}] {sig_name} — 유효기간 내 기존 기록, 스킵")
             continue
