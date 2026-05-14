@@ -26,16 +26,14 @@ TREND_ICONS = {
     "상승지속":   "📈",
     "건강한조정": "📉",
     "횡보중":     "➡️",
-    "단기하락":   "🔻",
-    "추세하락":   "⛔",
+    "하락주의":   "🔻",
 }
 
 TREND_DESC = {
-    "상승지속":   "SMA20·60 위 + 20일 3%↑ (모멘텀 유지)",
-    "건강한조정": "SMA60 위 + SMA20 아래 + RSI>30 (눌림목, 관심)",
-    "횡보중":     "SMA200 위 + 20일 ±5% 이내 (방향 대기)",
-    "단기하락":   "SMA200 위지만 최근 하락 (장기 추세는 살아있음)",
-    "추세하락":   "SMA200 아래 (장기 추세 꺾임, 신중 접근)",
+    "상승지속":   "SMA20·60 위 + 20일 3%↑",
+    "건강한조정": "SMA60 위 + SMA20 아래 (눌림목 관심)",
+    "횡보중":     "SMA200 위 + 20일 ±5% 이내",
+    "하락주의":   "최근 하락 or SMA200 하단",
 }
 
 SIGNAL_COLORS = {
@@ -51,6 +49,12 @@ SIG_SHORT = {
     "SMA20+60":     "2선",
     "SMA20":        "S20",
 }
+
+
+def _display_pct(s: dict) -> float:
+    """display 문자열(예: '위+8.8%', '아래-5.4%')에서 부호 포함 숫자 추출 — 정렬 키용."""
+    m = re.search(r'[+-][\d.]+', s.get("display", ""))
+    return float(m.group()) if m else 0.0
 
 
 def _sep() -> str:
@@ -89,33 +93,54 @@ def _linked(text: str, url: str) -> str:
 # ══════════════════════════════════════════════════════════════════
 
 def _build_sec1(new_signals: list[dict], header: str, pages_url: str, market: str) -> str:
-    """섹션 1: 핵심 시그널"""
+    """섹션 1: 핵심 시그널 — 시그널별 우상향/횡보 서브그룹, % 내림차순 정렬"""
     lines = [header, _sep(), "", "🔥 <b>1. 핵심 시그널</b>"]
 
     signal_codes: set[str] = set()
 
-    if not new_signals:
-        lines.append("  (오늘 발생한 시그널 없음)")
-    else:
-        by_type: dict[str, list[str]] = {k: [] for k in SIGNAL_ICONS}
-        for item in new_signals:
-            signal_codes.add(item["code"])
-            warn = " ⚠️" if item.get("outlook") == "negative" else ""
-            url  = _chart_link(pages_url, market, item["code"], item["name"])
-            for sig in item["signals"]:
-                sig_name   = sig["name"]        if isinstance(sig, dict) else sig
-                stock_type = sig.get("stock_type", "") if isinstance(sig, dict) else ""
-                display    = sig.get("display",    "") if isinstance(sig, dict) else ""
-                type_str   = f"({stock_type}·{display})" if stock_type and display else ""
-                label      = f"{_linked(item['name'], url)}{warn}{type_str}"
-                by_type.setdefault(sig_name, []).append(label)
+    # 시그널 타입별 그룹핑
+    by_type: dict[str, list[dict]] = {k: [] for k in SIGNAL_ICONS}
+    for item in new_signals:
+        signal_codes.add(item["code"])
+        warn = " ⚠️" if item.get("outlook") == "negative" else ""
+        url  = _chart_link(pages_url, market, item["code"], item["name"])
+        for sig in item["signals"]:
+            sig_name   = sig["name"]        if isinstance(sig, dict) else sig
+            stock_type = sig.get("stock_type", "") if isinstance(sig, dict) else ""
+            display    = sig.get("display",    "") if isinstance(sig, dict) else ""
+            by_type.setdefault(sig_name, []).append({
+                "name":       item["name"],
+                "url":        url,
+                "warn":       warn,
+                "stock_type": stock_type,
+                "display":    display,
+            })
 
-        for sig_name, icon in SIGNAL_ICONS.items():
-            stocks = by_type.get(sig_name, [])
-            if stocks:
-                lines.append(f"[{sig_name}{icon}]  {' | '.join(stocks)}")
+    for sig_name, icon in SIGNAL_ICONS.items():
+        stocks = by_type.get(sig_name, [])
+        lines.append(f"[{sig_name}{icon}]")
 
-    lines.append("")
+        if not stocks:
+            lines.append("  종목 없음")
+        else:
+            # 우상향 / 횡보+기타 서브그룹 분리 후 % 내림차순 정렬
+            group_up   = sorted([s for s in stocks if s["stock_type"] == "우상향"],
+                                key=_display_pct, reverse=True)
+            group_side = sorted([s for s in stocks if s["stock_type"] != "우상향"],
+                                key=_display_pct, reverse=True)
+
+            for label, group in [("🔺 우상향", group_up), ("➡️ 횡보", group_side)]:
+                if not group:
+                    continue
+                lines.append(f"  <b><u>{label}</u></b>")
+                parts = []
+                for s in group:
+                    disp  = f"({s['display']})" if s["display"] else ""
+                    parts.append(f"{_linked(s['name'], s['url'])}{s['warn']}{disp}")
+                lines.append("  " + " | ".join(parts))
+
+        lines.append("")
+
     lines.append("  <i>전선수렴🔴 역대급 | SMA20+60+120🟡 강한매집 | SMA20+60🟢 중기지지 | SMA20🔵 단기지지</i>")
 
     return "\n".join(lines), signal_codes
@@ -193,35 +218,31 @@ def _build_sec3(supply: dict, market: str, header: str, kis_failed: bool = False
     return "\n".join(lines)
 
 
-def _build_sec4(trends: dict, signal_codes: set, pages_url: str, market: str,
+def _build_sec4(trends: dict, pages_url: str, market: str,
                 header: str, chart_url: str) -> str:
-    """섹션 4: 추세 분석 + 푸터"""
-    lines = [header, _sep(), "", "📈 <b>4. 추세 분석</b>", "  <i>(섹션1 종목 자동 제외)</i>"]
+    """섹션 4: 추세 분석 + 푸터 (전체 종목 포함, 섹션1 제외 없음)"""
+    lines = [header, _sep(), "", "📈 <b>4. 추세 분석</b>"]
 
     has_any = False
     for trend_name, icon in TREND_ICONS.items():
-        raw = trends.get(trend_name, [])
-        stocks = []
-        for s in raw:
-            s_code = s["code"] if isinstance(s, dict) else s
-            if s_code not in signal_codes:
-                stocks.append(s)
+        stocks = trends.get(trend_name, [])
+        if not stocks:
+            continue
 
-        if stocks:
-            linked = []
-            for s in stocks[:20]:  # 카테고리당 최대 20종목
-                if isinstance(s, dict):
-                    s_name = s["name"]
-                    s_code = s.get("code", "")
-                    url    = _chart_link(pages_url, market, s_code, s_name)
-                    linked.append(_linked(s_name, url))
-                else:
-                    linked.append(s)
-            suffix = f" 외 {len(stocks)-20}개" if len(stocks) > 20 else ""
-            desc = TREND_DESC.get(trend_name, "")
-            lines.append(f"{icon} <b>{trend_name}</b>{suffix}  <i>← {desc}</i>")
-            lines.append("  " + " | ".join(linked))
-            has_any = True
+        linked = []
+        for s in stocks[:30]:
+            if isinstance(s, dict):
+                url = _chart_link(pages_url, market, s.get("code", ""), s["name"])
+                linked.append(_linked(s["name"], url))
+            else:
+                linked.append(s)
+
+        total = len(stocks)
+        more  = f" <i>(+{total - 30}개 더)</i>" if total > 30 else ""
+        desc  = TREND_DESC.get(trend_name, "")
+        lines.append(f"{icon} <b>{trend_name}</b> <code>{total}종목</code>  <i>{desc}</i>")
+        lines.append("  " + " | ".join(linked) + more)
+        has_any = True
 
     if not has_any:
         lines.append("  (분석 데이터 없음)")
@@ -265,7 +286,13 @@ def build_messages(
     msgs = [sec1]
     msgs.extend(_build_sec2_chunks(table, header))
     msgs.append(_build_sec3(supply, market, header, kis_failed=kis_failed))
-    msgs.append(_build_sec4(trends, signal_codes, pages_url, market, header, chart_url))
+    msgs.append(_build_sec4(trends, pages_url, market, header, chart_url))
+
+    # FULL 모드(장마감)일 때 맨 앞에 구분선 삽입
+    if mode == "FULL":
+        date_part = now_str.split()[0]  # e.g. "05.14(목)"
+        divider = f"━━━━━━━━━━━━━━━━━━━━━\n📊 {market}  {date_part}  장마감\n━━━━━━━━━━━━━━━━━━━━━"
+        msgs.insert(0, divider)
 
     return msgs
 

@@ -65,6 +65,17 @@ def save_json(path: Path, data: dict) -> None:
 # 재무 필터
 # ══════════════════════════════════════════════════════════════════
 
+def _to_float(val) -> "float | None":
+    """yfinance 재무값 → float 변환. 문자열·NaN 등 변환 실패 시 None 반환."""
+    if val is None:
+        return None
+    try:
+        v = float(val)
+        return None if (v != v) else v  # NaN 체크
+    except (ValueError, TypeError):
+        return None
+
+
 def passes_financial_filter(info: dict) -> tuple[bool, str]:
     """
     명확한 부실 기업만 제외. yfinance 데이터 누락 시 통과.
@@ -72,11 +83,11 @@ def passes_financial_filter(info: dict) -> tuple[bool, str]:
     한국 종목은 yfinance 재무 데이터가 자주 비어있으므로
     None 체크 후 임계치는 느슨하게 — 극단적 케이스만 차단.
     """
-    per            = info.get("trailingPE")
-    debt_ratio     = info.get("debtToEquity")
-    revenue_growth = info.get("revenueGrowth")           # -0.25 = -25%
-    op_margin      = info.get("operatingMargins")         # -0.30 = -30%
-    psr            = info.get("priceToSalesTrailing12Months")
+    per            = _to_float(info.get("trailingPE"))
+    debt_ratio     = _to_float(info.get("debtToEquity"))
+    revenue_growth = _to_float(info.get("revenueGrowth"))           # -0.25 = -25%
+    op_margin      = _to_float(info.get("operatingMargins"))         # -0.30 = -30%
+    psr            = _to_float(info.get("priceToSalesTrailing12Months"))
 
     if per is not None and per < 0:
         return False, f"PER {per:.1f} (적자)"
@@ -271,10 +282,9 @@ def run(market: str, report_mode: str) -> None:
                 signal_history = record_signals(
                     signal_history, code, name, signals, current_price, today
                 )
-        else:
-            # 추세 분류 (시그널 없는 종목만 섹션4)
-            trend = classify_trend(df)
-            trend_buckets[trend].append({"name": name, "code": code})
+        # 추세 분류 — 시그널 유무와 무관하게 전체 종목 섹션4 포함
+        trend = classify_trend(df)
+        trend_buckets[trend].append({"name": name, "code": code})
 
         # 차트 생성
         sig_history_for_code = signal_history.get(code, [])
